@@ -108,8 +108,40 @@ else
   echo "[7/8] SKIPPED — sync-ralph-config.sh not in repo"
 fi
 
-# ── Step 8: Regression self-test ─────────────────────────────
-echo "[8/8] Running self-test ..."
+# ── Step 8: Sub-agents (GENERATOR / CRITIC / JUDGE classification) ──
+echo "[8/9] Installing sub-agents to ~/.sub-agents/ ..."
+if [[ -d "$REPO_ROOT/sub-agents" ]]; then
+  if [[ -d "${HOME}/.sub-agents" ]]; then
+    echo "  → ~/.sub-agents already exists — preserving (repo is additive on new install)"
+    echo "  → To force-reinstall: rm -rf ~/.sub-agents && re-run bootstrap"
+  else
+    cp -r "$REPO_ROOT/sub-agents" "${HOME}/.sub-agents"
+    chmod -R a-w "${HOME}/.sub-agents"
+    FILE_COUNT=$(find "${HOME}/.sub-agents" -type f | wc -l | tr -d ' ')
+    echo "  → $FILE_COUNT sub-agent files installed"
+  fi
+else
+  echo "  → sub-agents/ not in repo (skipping)"
+fi
+
+# ── Step 9: Commands (slash commands for Claude Code / VS Code) ──
+echo "[9/9] Installing slash commands to ~/.claude/commands/ ..."
+if [[ -d "$REPO_ROOT/commands" ]]; then
+  mkdir -p "${HOME}/.claude/commands"
+  cp -r "$REPO_ROOT/commands/"* "${HOME}/.claude/commands/"
+  chmod 444 "${HOME}/.claude/commands/"*.md 2>/dev/null || true
+  echo "  → $(find "$REPO_ROOT/commands" -name '*.md' | wc -l | tr -d ' ') commands installed"
+else
+  echo "  → commands/ not in repo (skipping)"
+fi
+
+# ── Step 10: Ralph config script ──
+if [[ -f "$REPO_ROOT/scripts/ralph-config.sh" ]]; then
+  mkdir -p "${HOME}/.claude/scripts"
+  cp "$REPO_ROOT/scripts/ralph-config.sh" "${HOME}/.claude/scripts/"
+  chmod +x "${HOME}/.claude/scripts/ralph-config.sh"
+  echo "  → ralph-config.sh installed"
+fi
 TEST_LOG=$(mktemp)
 bash ~/.claude/hooks/test-ralph-refactor.sh > "$TEST_LOG" 2>&1 || true
 PASS_COUNT=$(grep -c "^  PASS" "$TEST_LOG" 2>/dev/null || echo "0")

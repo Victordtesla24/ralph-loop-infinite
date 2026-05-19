@@ -174,6 +174,31 @@ Fallback model: **MiniMax-M2.7** via MinMax OAuth (MiniMax.io) — see `.env.pro
 
 ---
 
+## Sub-Agents — GENERATOR / CRITIC / JUDGE Classification
+
+All sub-agents are classified under one of three roles from the blog:
+
+```
+~/.sub-agents/
+├── claude-roles/           ← 8 role definitions (blog-aligned)
+│   ├── orchestrator.SOUL.md   GENERATOR  (produces output, cannot stop loop)
+│   ├── coder.SOUL.md          GENERATOR
+│   ├── solution-architect.SOUL.md  GENERATOR
+│   ├── researcher.SOUL.md     GENERATOR
+│   ├── senior-sme.SOUL.md     GENERATOR
+│   ├── analyst.SOUL.md        CRITIC    (identifies concrete issues)
+│   ├── tester.SOUL.md         CRITIC
+│   └── verifier.SOUL.md       JUDGE     (scores + HMAC-signed PASS)
+├── council/                ← Worker prompts (GENERATOR + CRITIC)
+├── hierarchy/              ← Role effort/matrix definitions
+├── orchestrator/           ← Orchestrator prompts (GENERATOR)
+└── verifier/               ← Verifier prompts (JUDGE)
+```
+
+Installed by bootstrap to `~/.sub-agents/` — preserved on re-runs (not overwritten).
+
+---
+
 ## Files
 
 ```
