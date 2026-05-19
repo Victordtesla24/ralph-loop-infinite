@@ -1,0 +1,14 @@
+effort_scale:
+  - max
+  - xhigh
+  - high
+  - medium
+  - low
+
+levels:
+  orchestrator: max
+  level_1: xhigh
+  level_2: high
+  level_3: medium
+
+depth_cap: 3
