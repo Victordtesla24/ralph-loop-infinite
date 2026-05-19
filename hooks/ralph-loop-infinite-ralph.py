@@ -101,14 +101,29 @@ DEFAULT_TIMEOUT_S = 90
 
 @dataclasses.dataclass
 class Generated:
-    """Stage-1 output. The agent's §3 exit report is the generated artifact."""
+    """Stage-1 output produced by the first-class GENERATE stage."""
 
     content: str
     assumptions: list[str] = dataclasses.field(default_factory=list)
+    remediation_applied: str = ""
+    iteration: int = 0
+    backend: str = "inline"
+    artifacts: list[str] = dataclasses.field(default_factory=list)
 
     @property
     def content_hash(self) -> str:
         return hashlib.sha256(self.content.encode("utf-8", errors="replace")).hexdigest()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "content": self.content,
+            "assumptions": list(self.assumptions),
+            "remediation_applied": self.remediation_applied,
+            "iteration": self.iteration,
+            "backend": self.backend,
+            "artifacts": list(self.artifacts),
+            "content_hash": self.content_hash,
+        }
 
 
 @dataclasses.dataclass
@@ -794,10 +809,13 @@ def offline_rule_based_judge(*, original_prompt: str, agent_output: str, evidenc
     if not agent_output.strip() or "empty agent output" in agent_output.lower(): missing.append("agent-output")
     if len(agent_output.strip()) < 200: deviations.append("agent-output-too-short-for-structural-validation")
     if critique.issues: deviations.extend(critique.issues[:3])
-    evidence = "offline deterministic structural check; provider=offline-rule-based"
-    base = 0.82 if not missing and not deviations else 0.45
-    decision = "accept" if base >= threshold and not missing and not deviations else "revise"
-    return Judgement(decision=decision, overall_score=base, threshold=threshold, breakdown={d: DimensionScore(base, evidence) for d in SCORING_DIMENSIONS}, reasoning=evidence, missing=missing, deviations=deviations, provider="offline-rule-based", model="deterministic-structural-v1", effort=effort, raw_model_text="")
+    evidence = "offline deterministic structural check; provider=offline-rule-based; fail-closed: offline fallback cannot PASS"
+    # Offline fallback is diagnostic only. Semantic quality must be accepted by a
+    # real judge provider; when providers are unavailable, the loop must revise.
+    base = min(float(threshold) - 0.01, 0.79)
+    if missing or deviations:
+        base = min(base, 0.45)
+    return Judgement(decision="revise", overall_score=base, threshold=threshold, breakdown={d: DimensionScore(base, evidence) for d in SCORING_DIMENSIONS}, reasoning=evidence, missing=missing or ["judge-provider-unavailable"], deviations=deviations, provider="offline-rule-based", model="deterministic-structural-v1", effort=effort, raw_model_text="")
 
 def critique_and_judge(
     *,
@@ -827,6 +845,122 @@ def critique_and_judge(
     judgement, judge_raw = judge_only(original_prompt=original_prompt, agent_output=agent_output, evidence_bundle_json=evidence_bundle_json, critique=critique, policy=policy, session_id=session_id, iteration=iteration, effort=effort, fake_failure=fake_failure)
     log_stage("judge_output", {"session_id": session_id, "iteration": iteration, "decision": judgement.decision, "overall_score": judgement.overall_score, "scoring_dimensions": {k: v.to_dict() for k, v in judgement.breakdown.items()}, "missing": judgement.missing, "deviations": judgement.deviations, "provider": judgement.provider, "model": judgement.model})
     return critique, judgement, judge_raw or critic_raw
+
+
+class RalphLoopEngine:
+    """Single explicit workflow owner for GENERATE→CRITIQUE→JUDGE→REMEDIATE.
+
+    Hooks are adapters around this class: Stop/verifier shell scripts may still
+    perform HMAC signing and Claude hook I/O, but stage ownership and state
+    transitions live here so the loop is credible, inspectable, and testable.
+    """
+
+    def __init__(self, *, policy: dict[str, Any] | None = None, session_id: str, iteration: int, threshold: float | None = None) -> None:
+        self.policy = policy or load_policy_with_fallback()
+        self.session_id = session_id
+        self.iteration = int(iteration)
+        self.threshold = float(threshold if threshold is not None else self.policy.get("scoring_threshold", DEFAULT_THRESHOLD))
+        self.transitions: list[dict[str, Any]] = []
+
+    def _transition(self, stage: str, **payload: Any) -> None:
+        record = {"session_id": self.session_id, "iteration": self.iteration, "stage": stage, **payload}
+        self.transitions.append(record)
+        log_stage(f"engine_{stage}", record)
+
+    def generate(self, *, original_prompt: str, prior_output: str = "", remediation: str = "", backend_result_json: str = "") -> Generated:
+        """First-class GENERATE stage returning a typed Generated object.
+
+        The generator backend may be the sidecar subprocess. Its JSON is consumed
+        here as optional backend evidence; the canonical output is still typed.
+        """
+        artifacts: list[str] = []
+        backend = "inline"
+        assumptions: list[str] = []
+        backend_ok = False
+        if backend_result_json.strip():
+            try:
+                backend_obj = json.loads(backend_result_json)
+                backend = str(backend_obj.get("backend") or "sidecar")
+                backend_ok = bool(backend_obj.get("ok"))
+                for item in backend_obj.get("artifacts", []) or []:
+                    artifacts.append(str(item))
+                for result in backend_obj.get("results", []) or []:
+                    if isinstance(result, dict):
+                        ev = result.get("evidence_file")
+                        if ev:
+                            artifacts.append(str(ev))
+            except json.JSONDecodeError:
+                assumptions.append("generator backend returned unparseable JSON")
+                backend = "sidecar-unparseable"
+        content_parts = [
+            f"Ralph GENERATE iteration {self.iteration} for session {self.session_id}.",
+            "=== ORIGINAL USER PROMPT ===",
+            original_prompt.strip(),
+        ]
+        if prior_output.strip():
+            content_parts.extend(["", "=== PRIOR OUTPUT ===", prior_output.strip()])
+        if remediation.strip():
+            content_parts.extend(["", "=== REMEDIATION INPUT ===", remediation.strip()])
+        if artifacts:
+            content_parts.extend(["", "=== GENERATOR EVIDENCE ARTIFACTS ===", "\n".join(f"- {a}" for a in sorted(set(artifacts)))])
+        if backend_result_json.strip():
+            content_parts.extend(["", "=== GENERATOR BACKEND SUMMARY ===", backend_result_json.strip()[:4000]])
+        generated = Generated(
+            content="\n".join(content_parts).strip(),
+            assumptions=assumptions,
+            remediation_applied=remediation,
+            iteration=self.iteration,
+            backend=backend,
+            artifacts=sorted(set(artifacts)),
+        )
+        self._transition("generate", content_hash=generated.content_hash, backend=backend, backend_ok=backend_ok, artifact_count=len(generated.artifacts))
+        return generated
+
+    def critique(self, *, original_prompt: str, generated: Generated, evidence_bundle_json: str, fake_failure: dict[str, bool] | None = None) -> Critique:
+        critique, _, provider, model = critic_only(
+            original_prompt=original_prompt,
+            agent_output=generated.content,
+            evidence_bundle_json=evidence_bundle_json,
+            policy=self.policy,
+            session_id=self.session_id,
+            iteration=self.iteration,
+            fake_failure=fake_failure or {},
+        )
+        self._transition("critique", issue_count=len(critique.issues), provider=provider, model=model)
+        return critique
+
+    def judge(self, *, original_prompt: str, generated: Generated, evidence_bundle_json: str, critique: Critique, effort: str | None = None, fake_failure: dict[str, bool] | None = None) -> Judgement:
+        judgement, _ = judge_only(
+            original_prompt=original_prompt,
+            agent_output=generated.content,
+            evidence_bundle_json=evidence_bundle_json,
+            critique=critique,
+            policy=self.policy,
+            session_id=self.session_id,
+            iteration=self.iteration,
+            effort=effort or str(self.policy.get("effort", DEFAULT_EFFORT)),
+            fake_failure=fake_failure or {},
+        )
+        self._transition("judge", decision=judgement.decision, overall_score=judgement.overall_score, provider=judgement.provider, model=judgement.model)
+        return judgement
+
+    def remediate(self, *, original_prompt: str, generated: Generated, critique: Critique) -> str:
+        prompt_text = build_remediation_prompt(original_user_prompt=original_prompt, generated=generated, critique=critique)
+        self._transition("remediate", remediation_prompt_bytes=len(prompt_text.encode("utf-8")), issue_count=len(critique.issues))
+        return prompt_text
+
+    def run_iteration(self, *, original_prompt: str, prior_output: str, evidence_bundle_json: str, remediation: str = "", backend_result_json: str = "", fake_failure: dict[str, bool] | None = None) -> dict[str, Any]:
+        generated = self.generate(original_prompt=original_prompt, prior_output=prior_output, remediation=remediation, backend_result_json=backend_result_json)
+        critique = self.critique(original_prompt=original_prompt, generated=generated, evidence_bundle_json=evidence_bundle_json, fake_failure=fake_failure)
+        judgement = self.judge(original_prompt=original_prompt, generated=generated, evidence_bundle_json=evidence_bundle_json, critique=critique, fake_failure=fake_failure)
+        next_remediation = "" if judgement.decision == "accept" else self.remediate(original_prompt=original_prompt, generated=generated, critique=critique)
+        return {
+            "generated": generated.to_dict(),
+            "critique": {"issues": critique.issues, "severity": critique.severity, "suggestions": critique.suggestions, "reasoning": critique.raw_rationale},
+            "judgement": judgement.to_dict(),
+            "next_remediation_prompt": next_remediation,
+            "transitions": list(self.transitions),
+        }
 
 
 def _forced_fail_outputs(
@@ -1015,6 +1149,25 @@ def cmd_judge(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_generate(args: argparse.Namespace) -> int:
+    original_prompt = _read(args.original_prompt_file)
+    prior_output = _read(args.prior_output_file)
+    remediation = _read(args.remediation_file)
+    backend = _read(args.backend_result_file)
+    engine = RalphLoopEngine(policy=load_policy_with_fallback(), session_id=args.session_id, iteration=args.iteration)
+    generated = engine.generate(
+        original_prompt=original_prompt,
+        prior_output=prior_output,
+        remediation=remediation,
+        backend_result_json=backend,
+    )
+    payload = {"session_id": args.session_id, "iteration": args.iteration, "generated": generated.to_dict(), "transitions": engine.transitions}
+    if args.output_file:
+        Path(args.output_file).write_text(generated.content, encoding="utf-8")
+    print(json.dumps(payload, separators=(",", ":")))
+    return 0
+
+
 def cmd_remediation(args: argparse.Namespace) -> int:
     original_prompt = _read(args.original_prompt_file)
     agent_output = _read(args.agent_output_file)
@@ -1162,10 +1315,22 @@ def cmd_self_test(args: argparse.Namespace) -> int:
     if off.provider != "offline-rule-based" or off.decision != "revise":
         failures.append(f"offline fallback wrong: {off}")
 
+    off_good_shape = offline_rule_based_judge(original_prompt="p", agent_output="x" * 1000, evidence_bundle_json="{}", critique=Critique(), threshold=0.8, effort="max")
+    if off_good_shape.decision != "revise" or off_good_shape.overall_score >= 0.8:
+        failures.append(f"offline fallback must never accept, got: {off_good_shape}")
+
+    if "RalphLoopEngine" not in globals():
+        failures.append("missing explicit RalphLoopEngine owner for generate→critique→judge→remediate")
+    else:
+        engine = RalphLoopEngine(policy={"provider": "anthropic", "model_primary": "claude-opus-4-7"}, session_id="self-test", iteration=1)
+        generated = engine.generate(original_prompt="prompt", prior_output="prior", remediation="fix")
+        if not isinstance(generated, Generated) or not generated.content.strip():
+            failures.append(f"engine.generate did not return typed Generated content: {generated}")
+
     if failures:
         print(json.dumps({"status": "FAIL", "failures": failures}, indent=2))
         return 1
-    print(json.dumps({"status": "PASS", "tests_run": 11}))
+    print(json.dumps({"status": "PASS", "tests_run": 13}))
     return 0
 
 
@@ -1179,6 +1344,15 @@ def main() -> int:
     p_j.add_argument("--evidence-bundle-file", default="")
     p_j.add_argument("--session-id", required=True)
     p_j.add_argument("--iteration", type=int, required=True)
+
+    p_g = sub.add_parser("generate", help="run first-class GENERATE stage and emit Generated JSON")
+    p_g.add_argument("--original-prompt-file", required=True)
+    p_g.add_argument("--prior-output-file", default="")
+    p_g.add_argument("--remediation-file", default="")
+    p_g.add_argument("--backend-result-file", default="")
+    p_g.add_argument("--output-file", default="")
+    p_g.add_argument("--session-id", required=True)
+    p_g.add_argument("--iteration", type=int, required=True)
 
     p_r = sub.add_parser("remediation", help="emit the canonical remediation prompt")
     p_r.add_argument("--original-prompt-file", required=True)
@@ -1198,6 +1372,8 @@ def main() -> int:
 
     if args.cmd == "judge":
         return cmd_judge(args)
+    if args.cmd == "generate":
+        return cmd_generate(args)
     if args.cmd == "remediation":
         return cmd_remediation(args)
     if args.cmd == "creds-check":

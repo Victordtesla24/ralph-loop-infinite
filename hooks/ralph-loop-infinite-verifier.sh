@@ -153,16 +153,24 @@ fi
 
 # ── Stage 2-3: Critique + Judge via the explicit Python helper ───────────────
 RAW_JUDGEMENT=""
-if [[ "${RALPH_VERIFIER_FORCE_FAIL:-0}" == "1" ]]; then
-  log "FORCED_FAIL: RALPH_VERIFIER_FORCE_FAIL=1"
+FORCE_FAIL_ENABLED=0
+FORCE_PASS_ENABLED=0
+if [[ "${RALPH_TEST_MODE:-0}" == "1" ]]; then
+  [[ "${RALPH_VERIFIER_FORCE_FAIL:-0}" == "1" ]] && FORCE_FAIL_ENABLED=1
+  [[ "${RALPH_VERIFIER_FORCE_PASS:-0}" == "1" ]] && FORCE_PASS_ENABLED=1
+elif [[ "${RALPH_VERIFIER_FORCE_FAIL:-0}" == "1" || "${RALPH_VERIFIER_FORCE_PASS:-0}" == "1" ]]; then
+  log "FORCE_FLAG_REJECTED: RALPH_VERIFIER_FORCE_* requires RALPH_TEST_MODE=1"
+fi
+if [[ "$FORCE_FAIL_ENABLED" == "1" ]]; then
+  log "FORCED_FAIL: RALPH_VERIFIER_FORCE_FAIL=1 (test mode)"
   RALPH_FORCE_FAIL=1 RAW_JUDGEMENT=$(RALPH_FORCE_FAIL=1 python3 "$RALPH_HELPER" judge \
     --original-prompt-file "$ORIGINAL_PROMPT_PATH" \
     --agent-output-file "$AGENT_OUTPUT_FILE_PATH" \
     --evidence-bundle-file "$EVIDENCE_BUNDLE_FILE" \
     --session-id "$SESSION_ID" \
     --iteration "$ITERATION" 2>/dev/null)
-elif [[ "${RALPH_VERIFIER_FORCE_PASS:-0}" == "1" ]]; then
-  log "FORCED_PASS: RALPH_VERIFIER_FORCE_PASS=1"
+elif [[ "$FORCE_PASS_ENABLED" == "1" ]]; then
+  log "FORCED_PASS: RALPH_VERIFIER_FORCE_PASS=1 (test mode)"
   RAW_JUDGEMENT='{"verdict":"PASS","decision":"accept","overall_score":1,"threshold":0.8,"scoring_dimensions":{"completeness":{"score":1,"evidence":"forced e2e pass"},"correctness":{"score":1,"evidence":"forced e2e pass"},"clarity":{"score":1,"evidence":"forced e2e pass"},"depth":{"score":1,"evidence":"forced e2e pass"},"actionability":{"score":1,"evidence":"forced e2e pass"}},"missing":[],"deviations":[],"critique":{"issues":[],"severity":[],"suggestions":[]},"reasoning":"forced e2e pass","provider":"offline-rule-based","model":"forced-e2e","effort":"max"}'
 elif [[ ! -x "$RALPH_HELPER" ]]; then
   log "FATAL: RALPH helper missing at $RALPH_HELPER"

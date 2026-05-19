@@ -384,7 +384,52 @@ rm -f "$TEST_SCRIPT"
 
 # --------------------------------------------------------------------------
 echo
-echo "[7] DB self-test + Ralph helper self-test"
+printf '[7] Stop hook wiring: FAIL/PRECHECK_FAIL deterministically trigger generator\n'
+# --------------------------------------------------------------------------
+T7_WIRING=$(python3 - "$STOP_SH" <<'PY'
+import json, pathlib, sys
+text = pathlib.Path(sys.argv[1]).read_text()
+pre = text.find('verifier-evidence-precheck-fail')
+pre_gen = text.rfind('run_generator_once', 0, pre)
+fail = text.find('verifier-fail')
+fail_gen = text.rfind('run_generator_once', 0, fail)
+print(json.dumps({
+  'precheck_has_generator_before_block': pre > 0 and pre_gen > 0,
+  'fail_has_generator_before_block': fail > 0 and fail_gen > 0,
+}))
+PY
+)
+if echo "$T7_WIRING" | grep -q '"precheck_has_generator_before_block": true' && echo "$T7_WIRING" | grep -q '"fail_has_generator_before_block": true'; then
+  pass "stop hook wires generator before PRECHECK_FAIL and FAIL blocks: $T7_WIRING"
+else
+  fail "stop hook generator wiring missing: $T7_WIRING"
+fi
+
+GENERATOR_HELPER="$SBX_ROOT/.claude/hooks/ralph-loop-infinite-generator.py"
+FAKE_SPAWN="$SBX_ROOT/fake-spawn.sh"
+cat > "$FAKE_SPAWN" <<'SH'
+#!/bin/bash
+set -euo pipefail
+role="${1:-unknown}"
+python3 - <<'PY' "$role" "${RALPH_ROLE_EVIDENCE_FILE:-}"
+import json, pathlib, sys
+role, ev = sys.argv[1], sys.argv[2]
+p = pathlib.Path(ev); p.parent.mkdir(parents=True, exist_ok=True)
+p.write_text(json.dumps({"role": role, "executor_schema": "harness.v1"}) + "\n")
+print("ok", role)
+PY
+SH
+chmod +x "$FAKE_SPAWN"
+GEN_OUT=$(python3 "$GENERATOR_HELPER" --session-id harness --iteration 1 --original-prompt-file /tmp/nope --spawn-script "$FAKE_SPAWN" 2>&1)
+if echo "$GEN_OUT" | grep -q '"ok": true' && echo "$GEN_OUT" | grep -q '"orchestrator"' && echo "$GEN_OUT" | grep -q '"coder"' && echo "$GEN_OUT" | grep -q '"tester"'; then
+  pass "typed generator requires orchestrator/coder/tester and writes artifacts"
+else
+  fail "typed generator required-stage contract failed: $(echo "$GEN_OUT" | head -1)"
+fi
+
+# --------------------------------------------------------------------------
+echo
+printf '[8] DB self-test + Ralph helper self-test\n'
 # --------------------------------------------------------------------------
 DB_SELF=$(python3 "$DB_HELPER_SBX" self-test 2>&1)
 if echo "$DB_SELF" | grep -q '"status": "PASS"'; then

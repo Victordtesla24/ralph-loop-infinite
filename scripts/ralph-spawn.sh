@@ -1,198 +1,170 @@
 #!/bin/bash
-# ralph-spawn.sh — Spawn a sub-agent with the correct SOUL + system-prompt
-#
-# Maps user preference to GENERATOR/CRITIC/JUDGE classification and spawns
-# the appropriate sub-agent with the matching SOUL.md + system-prompt.md.
-#
-# Fix 7 of the Targeted Fixes list.
-#
-# USAGE:
-#   ralph-spawn.sh <role> <task> [--model <model>] [--provider <provider>]
-#   ralph-spawn.sh list
-#
-# ROLES:
-#   GENERATOR (produces output, cannot stop the loop):
-#     orchestrator  — drives the loop, decomposes, delegates, collects evidence
-#     coder         — writes production code, zero placeholders
-#     solution-architect  — designs systems, input→process→validation gate
-#     researcher    — gathers verified evidence, primary sources only
-#     senior-sme    — enforces Fortune 500 quality bar
-#     analyst       — decomposes raw prompts into 1:1 traceability map
-#
-#   CRITIC (identifies concrete issues, shapes next iteration):
-#     tester        — validates real behavior in real environments
-#     qa-verifier   — quality assurance against requirements
-#     analyst       — also acts as critic for structural issues
-#
-#   JUDGE (scores + decides, issues HMAC-signed PASS):
-#     verifier      — independent scoring, all dims ≥ 0.80
-#
-# PROVIDER CHAIN (from settings):
-#   Anthropic → MiniMax-M2.7 (fallback) → GLM (fallback) → fail-closed
-#
-# EXAMPLES:
-#   ralph-spawn.sh coder "write a function that sorts a list"
-#   ralph-spawn.sh tester "validate the sort function against edge cases"
-#   ralph-spawn.sh verifier "score the sort implementation"
-#   ralph-spawn.sh orchestrator "manage the loop for this task"
-#   ralph-spawn.sh list
-
+# ralph-spawn.sh — Spawn a Ralph sub-agent with explicit GCJ classification.
 set -euo pipefail
 
-SOUL_DIR="${HOME}/.sub-agents/claude-roles"
-PROMPT_DIR="${HOME}/.sub-agents/claude-roles"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd 2>/dev/null || pwd)"
+LOCAL_MODE="${RALPH_REPO_LOCAL_MODE:-0}"
+if [[ "$LOCAL_MODE" == "1" ]]; then
+  SOUL_DIR="${RALPH_SOUL_DIR:-$REPO_ROOT/sub-agents/claude-roles}"
+  PROMPT_DIR="${RALPH_PROMPT_DIR:-$REPO_ROOT/sub-agents/claude-roles}"
+else
+  SOUL_DIR="${RALPH_SOUL_DIR:-${HOME}/.sub-agents/claude-roles}"
+  PROMPT_DIR="${RALPH_PROMPT_DIR:-${HOME}/.sub-agents/claude-roles}"
+fi
 CLAUDE_CMD="${RALPH_SPAWN_CLAUDE_CMD:-claude}"
 
-# ── Role to GCJ classification map ────────────────────────────
-ROLE_TO_GCJ='{
+ROLE_TO_GCJ_JSON='{
   "orchestrator": "GENERATOR",
   "coder": "GENERATOR",
   "solution-architect": "GENERATOR",
   "researcher": "GENERATOR",
   "senior-sme": "GENERATOR",
-  "analyst": "GENERATOR",
+  "analyst-generator": "GENERATOR",
   "tester": "CRITIC",
   "qa-verifier": "CRITIC",
+  "analyst-critic": "CRITIC",
   "verifier": "JUDGE"
 }'
 
-# ── Parse arguments ──────────────────────────────────────────
+usage() {
+  cat <<USAGE
+Ralph-Loop-Infinite Sub-Agent Spawner
+
+USAGE:
+  ralph-spawn.sh <role> <task> [--model <model>] [--provider <provider>] [--mode generator|critic]
+  ralph-spawn.sh list
+  ralph-spawn.sh validate
+
+ROLE MODES:
+  analyst is ambiguous and must be called as analyst-generator or analyst-critic,
+  or as analyst --mode generator|critic. Call context controls classification.
+
+LOCAL MODE:
+  RALPH_REPO_LOCAL_MODE=1 uses repository-local sub-agents/claude-roles instead
+  of ~/.sub-agents/claude-roles.
+USAGE
+}
+
+list_roles() {
+  usage
+  echo
+  echo "CURRENT CLASSIFICATION:"
+  printf '%s' "$ROLE_TO_GCJ_JSON" | python3 -c 'import sys,json; d=json.load(sys.stdin); [print(f"  {k}: {v}") for k,v in d.items()]'
+}
+
+role_prompt_name() {
+  case "$1" in
+    analyst-generator|analyst-critic) printf 'analyst' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+validate_runtime() {
+  local missing=0
+  echo "ralph-spawn runtime validation"
+  echo "repo_root=$REPO_ROOT"
+  echo "local_mode=$LOCAL_MODE"
+  echo "soul_dir=$SOUL_DIR"
+  echo "prompt_dir=$PROMPT_DIR"
+  if [[ ! -d "$SOUL_DIR" ]]; then echo "MISSING: SOUL_DIR $SOUL_DIR"; missing=1; fi
+  if [[ ! -d "$PROMPT_DIR" ]]; then echo "MISSING: PROMPT_DIR $PROMPT_DIR"; missing=1; fi
+  if ! command -v python3 >/dev/null 2>&1; then echo "MISSING: python3"; missing=1; fi
+  if ! command -v "$CLAUDE_CMD" >/dev/null 2>&1; then echo "MISSING: claude command ($CLAUDE_CMD)"; missing=1; fi
+  for role in orchestrator coder tester verifier; do
+    local base; base=$(role_prompt_name "$role")
+    [[ -f "$SOUL_DIR/${base}.SOUL.md" ]] || { echo "MISSING: $SOUL_DIR/${base}.SOUL.md"; missing=1; }
+    [[ -f "$PROMPT_DIR/${base}.system-prompt.md" ]] || { echo "MISSING: $PROMPT_DIR/${base}.system-prompt.md"; missing=1; }
+  done
+  if [[ $missing -eq 0 ]]; then
+    echo "OK: all required runtime prerequisites present"
+  else
+    echo "FAIL: one or more runtime prerequisites missing"
+  fi
+  return "$missing"
+}
+
 ROLE="${1:-}"
 TASK="${2:-}"
-
-if [[ "$ROLE" == "list" ]] || [[ -z "$ROLE" ]]; then
-  echo "Ralph-Loop-Infinite Sub-Agent Spawner"
-  echo "======================================"
-  echo ""
-  echo "USAGE: ralph-spawn.sh <role> <task> [--model <model>] [--provider <provider>]"
-  echo ""
-  echo "ROLES:"
-  echo ""
-  echo "  GENERATOR (produces output, cannot stop the loop):"
-  echo "    orchestrator       drives the loop, decomposes, delegates, collects evidence"
-  echo "    coder              writes production code, zero placeholders"
-  echo "    solution-architect designs systems, input→process→validation gate"
-  echo "    researcher         gathers verified evidence, primary sources only"
-  echo "    senior-sme         enforces Fortune 500 quality bar"
-  echo "    analyst            decomposes raw prompts into 1:1 traceability map"
-  echo ""
-  echo "  CRITIC (identifies concrete issues, shapes next iteration):"
-  echo "    tester             validates real behavior in real environments"
-  echo "    qa-verifier        quality assurance against requirements"
-  echo ""
-  echo "  JUDGE (scores + decides, issues HMAC-signed PASS):"
-  echo "    verifier           independent scoring, all dims ≥ 0.80"
-  echo ""
-  echo "EXAMPLES:"
-  echo "  ralph-spawn.sh coder 'write a function that sorts a list'"
-  echo "  ralph-spawn.sh tester 'validate the sort function'"
-  echo "  ralph-spawn.sh verifier 'score the sort implementation'"
-  echo ""
-  echo "MODEL OVERRIDES:"
-  echo "  --model <model>   Override model (default: from settings.json)"
-  echo "  --provider <prov> Override provider"
-  echo ""
-  echo "CURRENT CLASSIFICATION:"
-  echo "$ROLE_TO_GCJ" | python3 -c "import sys,json; d=json.load(sys.stdin); [print(f'  {k}: {v}') for k,v in d.items()]"
-  exit 0
-fi
-
-if [[ -z "$TASK" ]]; then
-  echo "ERROR: task argument required"
-  echo "Usage: ralph-spawn.sh <role> <task>"
-  echo "       ralph-spawn.sh list"
-  exit 1
-fi
-
+if [[ "$ROLE" == "list" || -z "$ROLE" ]]; then list_roles; exit 0; fi
+if [[ "$ROLE" == "validate" ]]; then validate_runtime; exit $?; fi
+if [[ -z "$TASK" ]]; then echo "ERROR: task argument required" >&2; usage >&2; exit 1; fi
 shift 2 || true
 MODEL_OVERRIDE=""
 PROVIDER_OVERRIDE=""
+MODE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --model) MODEL_OVERRIDE="$2"; shift 2 ;;
-    --provider) PROVIDER_OVERRIDE="$2"; shift 2 ;;
+    --model) MODEL_OVERRIDE="${2:-}"; shift 2 ;;
+    --provider) PROVIDER_OVERRIDE="${2:-}"; shift 2 ;;
+    --mode) MODE="${2:-}"; shift 2 ;;
     *) shift ;;
   esac
 done
 
-# ── Validate role ────────────────────────────────────────────
-GCJ=$(echo "$ROLE_TO_GCJ" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('$ROLE','UNKNOWN'))" 2>/dev/null || echo "UNKNOWN")
+if [[ "$ROLE" == "analyst" ]]; then
+  case "$MODE" in
+    generator) ROLE="analyst-generator" ;;
+    critic) ROLE="analyst-critic" ;;
+    *) echo "ERROR: analyst role requires --mode generator or --mode critic, or use analyst-generator/analyst-critic" >&2; exit 2 ;;
+  esac
+fi
+
+GCJ=$(printf '%s' "$ROLE_TO_GCJ_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('$ROLE','UNKNOWN'))" 2>/dev/null || echo UNKNOWN)
 if [[ "$GCJ" == "UNKNOWN" ]]; then
-  echo "ERROR: Unknown role: $ROLE"
-  echo "Valid roles: orchestrator, coder, solution-architect, researcher, senior-sme, analyst, tester, qa-verifier, verifier"
-  echo "Run: ralph-spawn.sh list"
+  echo "ERROR: Unknown role: $ROLE" >&2
+  echo "Run: ralph-spawn.sh list" >&2
   exit 1
 fi
 
-# ── Load SOUL and system-prompt ──────────────────────────────
-SOUL_FILE="${SOUL_DIR}/${ROLE}.SOUL.md"
-PROMPT_FILE="${PROMPT_DIR}/${ROLE}.system-prompt.md"
-
-if [[ ! -f "$SOUL_FILE" ]]; then
-  echo "ERROR: SOUL file not found: $SOUL_FILE"
-  echo "Is ~/.sub-agents/claude-roles/ installed? Run: bash bootstrap.sh"
+BASE_ROLE=$(role_prompt_name "$ROLE")
+SOUL_FILE="${SOUL_DIR}/${BASE_ROLE}.SOUL.md"
+PROMPT_FILE="${PROMPT_DIR}/${BASE_ROLE}.system-prompt.md"
+if [[ ! -f "$SOUL_FILE" || ! -f "$PROMPT_FILE" ]]; then
+  echo "ERROR: role prompt prerequisites missing" >&2
+  [[ -f "$SOUL_FILE" ]] || echo "MISSING: $SOUL_FILE" >&2
+  [[ -f "$PROMPT_FILE" ]] || echo "MISSING: $PROMPT_FILE" >&2
+  echo "Run: RALPH_REPO_LOCAL_MODE=1 scripts/ralph-spawn.sh validate" >&2
   exit 1
 fi
 
-if [[ ! -f "$PROMPT_FILE" ]]; then
-  echo "ERROR: system-prompt file not found: $PROMPT_FILE"
-  exit 1
-fi
-
-SOUL_CONTENT=$(cat "$SOUL_FILE")
-PROMPT_CONTENT=$(cat "$PROMPT_FILE")
-
-# ── Load provider/model from settings if not overridden ───────
+SOUL_CONTENT=$(<"$SOUL_FILE")
+PROMPT_CONTENT=$(<"$PROMPT_FILE")
 if [[ -z "$MODEL_OVERRIDE" ]]; then
-  MODEL_OVERRIDE=$(python3 -c "
+  MODEL_OVERRIDE=$(python3 - <<'PY' 2>/dev/null || echo "claude-opus-4-7"
 import json
 from pathlib import Path
 data = {}
-for p in [Path.home() / '.claude' / 'settings.json', Path.home() / '.claude' / 'settings.local.json']:
+for p in [Path.home()/'.claude'/'settings.json', Path.home()/'.claude'/'settings.local.json']:
     if p.exists():
         try: data.update(json.loads(p.read_text()))
-        except: pass
+        except Exception: pass
 policy = data.get('_ralphLoopInfiniteExitPolicy', {}) or {}
 vp = policy.get('verifier_policy', {}) or {}
 print(vp.get('model_primary', 'claude-opus-4-7'))
-" 2>/dev/null || echo "claude-opus-4-7")
+PY
+)
 fi
 
-# ── Build the combined system prompt with GCJ classification ──
 SYSTEM_PROMPT="${SOUL_CONTENT}
 
-$(echo "--- GCJ CLASSIFICATION ---")
-echo "This sub-agent is classified as: $GCJ"
-echo "- GENERATOR: produces output, cannot stop the loop, repeats until JUDGE PASS"
-echo "- CRITIC: identifies concrete issues, shapes next GENERATOR iteration"
-echo "- JUDGE: scores 5 dimensions, issues HMAC-signed PASS, only role that exits the loop"
-echo "--- END GCJ CLASSIFICATION ---")
+--- GCJ CLASSIFICATION ---
+This sub-agent is classified as: ${GCJ}
+- GENERATOR: produces output, cannot stop the loop, repeats until JUDGE PASS.
+- CRITIC: identifies concrete issues and shapes the next GENERATOR iteration.
+- JUDGE: scores five dimensions and only exits via HMAC-signed PASS.
+Analyst split is context-enforced: analyst-generator may generate traceability; analyst-critic may critique structural gaps.
+--- END GCJ CLASSIFICATION ---
 
-$(echo "--- SYSTEM PROMPT ---")
-echo "$PROMPT_CONTENT"
-echo "--- END SYSTEM PROMPT ---")"
+--- SYSTEM PROMPT ---
+${PROMPT_CONTENT}
+--- END SYSTEM PROMPT ---"
 
-# ── Spawn the sub-agent ──────────────────────────────────────
 echo "[ralph-spawn] Spawning $ROLE ($GCJ) with model $MODEL_OVERRIDE"
 echo "[ralph-spawn] Task: ${TASK:0:80}..."
-
-# Build the claude command
-CLAUDE_ARGS=(
-  --system-prompt "$SYSTEM_PROMPT"
-  --message "$TASK"
-)
-
-if [[ -n "$PROVIDER_OVERRIDE" ]]; then
-  CLAUDE_ARGS+=(--provider "$PROVIDER_OVERRIDE")
-fi
-
-if [[ -n "$MODEL_OVERRIDE" ]]; then
-  CLAUDE_ARGS+=(--model "$MODEL_OVERRIDE")
-fi
-
-# Execute
+CLAUDE_ARGS=(--system-prompt "$SYSTEM_PROMPT" --message "$TASK")
+[[ -n "$PROVIDER_OVERRIDE" ]] && CLAUDE_ARGS+=(--provider "$PROVIDER_OVERRIDE")
+[[ -n "$MODEL_OVERRIDE" ]] && CLAUDE_ARGS+=(--model "$MODEL_OVERRIDE")
 "$CLAUDE_CMD" "${CLAUDE_ARGS[@]}"
 SPAWN_EXIT=$?
-
 echo "[ralph-spawn] $ROLE exited with code $SPAWN_EXIT"
-exit $SPAWN_EXIT
+exit "$SPAWN_EXIT"

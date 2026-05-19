@@ -62,19 +62,30 @@ log() {
 
 db_available() { [[ -x "$DB_HELPER" ]] && command -v python3 >/dev/null 2>&1; }
 run_generator_once() {
-  [[ "${RALPH_GENERATOR_DISABLE:-0}" == "1" ]] && return 0
-  [[ -x "$GENERATOR_HELPER" ]] || { log "GENERATOR_SKIP helper_missing=$GENERATOR_HELPER"; return 0; }
+  if [[ "${RALPH_GENERATOR_DISABLE:-0}" == "1" ]]; then
+    if [[ "${RALPH_TEST_MODE:-0}" == "1" ]]; then
+      log "GENERATOR_SKIP disabled_in_test_mode=1"
+      return 0
+    fi
+    log "GENERATOR_DISABLE_REJECTED requires_RALPH_TEST_MODE=1"
+  fi
+  [[ -x "$GENERATOR_HELPER" ]] || { log "GENERATOR_SKIP helper_missing=$GENERATOR_HELPER"; return 1; }
   local gen_log="$HOME/.claude/state/ralph-generator-last.json"
   local dry_arg=()
   [[ "${RALPH_GENERATOR_DRY_RUN:-0}" == "1" ]] && dry_arg=(--dry-run)
-  python3 "$GENERATOR_HELPER" \
+  if python3 "$GENERATOR_HELPER" \
     --session-id "${HOOK_SESSION:-unknown}" \
     --iteration "$ITERATION" \
     --original-prompt-file "${ORIGINAL_PROMPT_PATH:-$HOME/.claude/state/original-user-prompt.txt}" \
     --remediation-file "$REMEDIATION_PROMPT_FILE" \
     --agent-output-file "${AGENT_OUTPUT_FILE:-}" \
-    "${dry_arg[@]}" > "$gen_log" 2>&1 || true
-  log "GENERATOR_RUN iter=$ITERATION sess=${HOOK_SESSION:-unknown} log=$gen_log"
+    "${dry_arg[@]}" > "$gen_log" 2>&1; then
+    log "GENERATOR_RUN_OK iter=$ITERATION sess=${HOOK_SESSION:-unknown} log=$gen_log"
+    return 0
+  fi
+  local rc=$?
+  log "GENERATOR_RUN_FAIL iter=$ITERATION sess=${HOOK_SESSION:-unknown} rc=$rc log=$gen_log"
+  return "$rc"
 }
 
 db_init() {
@@ -809,6 +820,11 @@ except Exception:
     if [[ $STATE_UPDATE_OK -ne 1 ]]; then
       log "FATAL: failed to record PRECHECK_FAIL state update (DB+file). Failing closed."
     fi
+    # A PRECHECK_FAIL is a real loop failure: deterministically trigger the
+    # machine-driven generator before blocking the Stop hook. This proves the
+    # autonomy path does not depend on the main assistant deciding to retry.
+    log "STAGE=generate iter=$ITERATION sess=${HOOK_SESSION:-unknown} after=PRECHECK_FAIL"
+    run_generator_once || log "GENERATOR_PRECHECK_FAIL_PATH_NONZERO iter=$ITERATION sess=${HOOK_SESSION:-unknown}"
     emit_block \
       "Ralph-loop-infinite verifier-precheck FAILED: $REASONS. The report cites artifacts/logs that do not exist or makes claims without anchoring evidence. Produce a new §3 report with real, existing artifacts and re-run." \
       "verifier-evidence-precheck-fail" \
@@ -1101,7 +1117,7 @@ except Exception:
   fi
 
   # F2/F4: Stop is a monitor; the autonomous GENERATOR body runs as an explicit
-  # subprocess through ralph-spawn.sh roles (analyst,coder,tester by default).
+  # subprocess through ralph-spawn.sh roles (orchestrator,coder,tester by default).
   run_generator_once
 
   if [[ "$ITERATION" -ge 2 ]]; then

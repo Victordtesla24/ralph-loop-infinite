@@ -6,7 +6,7 @@
 
 ## Overview
 
-Ralph-Loop-Infinite is a production-grade autonomous AI system built on enforced structure — not wishful prompts hoping to behave. It implements the Ralph Loop architecture from [gowrishankar.info](https://gowrishankar.info/blog/ralph-loop-building-self-improving-ai-systems-without-claude/).
+Ralph-Loop-Infinite is a production-grade autonomous AI system built on enforced structure — not wishful prompts hoping to behave. It is an infinite verifier-gate framework inspired by the Ralph Loop architecture from [gowrishankar.info](https://gowrishankar.info/blog/ralph-loop-building-self-improving-ai-systems-without-claude/), with a bounded explicit engine inside the gate (`GENERATE → CRITIQUE → JUDGE → REMEDIATE`) and an additional HMAC-signed PASS requirement for operational safety.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -116,7 +116,7 @@ Requires ≥ 10 character reason. Agent cannot self-disarm.
 GENERATE → CRITIQUE → JUDGE → REMEDIATE → (repeat until JUDGE PASS)
 ```
 
-**Generate:** Structured output with explicit state contract. Not a raw string.
+**Generate:** First-class `Generated` typed object owned by `hooks/ralph-loop-infinite-ralph.py` (`RalphLoopEngine.generate()`). The optional `ralph-loop-infinite-generator.py` sidecar is an executor backend that returns typed role artifacts; hooks adapt to the engine, they do not own the loop.
 
 **Critique:** Concrete issues with severity (1-5) and actionable suggestions. NOT vague feedback.
 
@@ -147,7 +147,7 @@ Orchestrator (GENERATOR) ──▶ Worker/Coder (GENERATOR) ──▶ Evidence
 ```
 
 Workers do NOT self-assess. Orchestrator routes to JUDGE. Only JUDGE can stop the loop.
-On verifier FAIL, `ralph-loop-infinite-stop.sh` invokes `ralph-loop-infinite-generator.py`, which dispatches explicit `analyst,coder,tester` roles through `scripts/ralph-spawn.sh` (configurable via `RALPH_GENERATOR_ROLES`). The Stop hook monitors and records state; the generator subprocess is the autonomous body.
+On verifier FAIL or evidence PRECHECK_FAIL, `ralph-loop-infinite-stop.sh` deterministically invokes `ralph-loop-infinite-generator.py`, which dispatches explicit `orchestrator,coder,tester` stages through `scripts/ralph-spawn.sh` (configurable via `RALPH_GENERATOR_ROLES`). Success requires every required stage to exit 0 and write an evidence artifact. The Stop hook monitors and records state; the generator subprocess is the autonomous executor backend.
 
 ---
 
@@ -164,7 +164,7 @@ On verifier FAIL, `ralph-loop-infinite-stop.sh` invokes `ralph-loop-infinite-gen
 │                  ↓  FAIL                                     │
 │   [MiniMax / MiniMax-M2.7]               ← All other agents │
 │                  ↓  ALL FAIL                                 │
-│   [offline-rule-based / deterministic]    ← structural       │
+│   [offline-rule-based / deterministic]    ← diagnostic FAIL only          │
 │                  checks, clearly labelled provider           │
 │                                                             │
 │   Every skip and failure is logged.                         │
@@ -189,7 +189,7 @@ All sub-agents are classified under one of three roles from the blog:
 │   ├── solution-architect.SOUL.md  GENERATOR
 │   ├── researcher.SOUL.md     GENERATOR
 │   ├── senior-sme.SOUL.md     GENERATOR
-│   ├── analyst.SOUL.md        CRITIC    (identifies concrete issues)
+│   ├── analyst.SOUL.md        dual-mode prompt: use analyst-generator or analyst-critic
 │   ├── tester.SOUL.md         CRITIC
 │   └── verifier.SOUL.md       JUDGE     (scores + HMAC-signed PASS)
 ├── council/                ← Worker prompts (GENERATOR + CRITIC)
@@ -213,9 +213,11 @@ ralph-loop-infinite/
 ├── hooks/
 │   ├── ralph-loop-infinite-prompt.sh      ← UserPromptSubmit hook
 │   ├── ralph-loop-infinite-stop.sh        ← Stop hook (verifier invocation)
+│   ├── ralph-loop-infinite-session-start.sh ← SessionStart hook (PASS expiry + prerequisite report)
 │   ├── ralph-loop-infinite-bootstrap.sh   ← Bootstrap / install
 │   ├── ralph-loop-infinite-pretool.sh     ← Pre-tool deny guard
-│   ├── ralph-loop-infinite-ralph.py      ← 4-stage thinking loop
+│   ├── ralph-loop-infinite-ralph.py      ← explicit loop engine + first-class Generated stage
+│   ├── ralph-loop-infinite-generator.py  ← optional typed generator executor backend
 │   ├── ralph-loop-infinite-policy.py      ← Provider/model policy
 │   ├── ralph-loop-infinite-evidence.py    ← Evidence precheck
 │   ├── ralph-loop-infinite-db.py          ← SQLite state DB

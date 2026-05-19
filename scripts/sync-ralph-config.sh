@@ -170,7 +170,10 @@ chmod u+w "$SETTINGS_JSON" "$SETTINGS_LOCAL" 2>/dev/null || true
 python3 - <<'PY'
 import json, pathlib, copy
 
-settings = json.load(open(pathlib.Path.home() / '.claude' / 'settings.json'))
+home = pathlib.Path.home()
+hooks_dir = home / '.claude' / 'hooks'
+cmd = lambda name: f"bash {hooks_dir / name}"
+settings = json.load(open(home / '.claude' / 'settings.json'))
 
 # Ensure hooks section has all required Ralph registrations
 ralph_hooks = {
@@ -180,7 +183,7 @@ ralph_hooks = {
             "hooks": [
                 {
                     "type": "command",
-                    "command": "bash /Users/vic/.claude/hooks/ralph-loop-infinite-pretool.sh"
+                    "command": cmd("ralph-loop-infinite-pretool.sh")
                 }
             ]
         }
@@ -191,7 +194,7 @@ ralph_hooks = {
             "hooks": [
                 {
                     "type": "command",
-                    "command": "bash /Users/vic/.claude/hooks/ralph-loop-infinite-prompt.sh"
+                    "command": cmd("ralph-loop-infinite-prompt.sh")
                 }
             ]
         }
@@ -202,7 +205,7 @@ ralph_hooks = {
             "hooks": [
                 {
                     "type": "command",
-                    "command": "bash /Users/vic/.claude/hooks/ralph-loop-infinite-stop.sh"
+                    "command": cmd("ralph-loop-infinite-stop.sh")
                 }
             ]
         }
@@ -213,7 +216,11 @@ ralph_hooks = {
             "hooks": [
                 {
                     "type": "command",
-                    "command": "bash /Users/vic/.claude/hooks/ralph-loop-infinite-bootstrap.sh"
+                    "command": cmd("ralph-loop-infinite-bootstrap.sh")
+                },
+                {
+                    "type": "command",
+                    "command": cmd("ralph-loop-infinite-session-start.sh")
                 }
             ]
         }
@@ -228,10 +235,18 @@ for hook_type, handlers in ralph_hooks.items():
     if hook_type not in settings["hooks"]:
         settings["hooks"][hook_type] = handlers
     else:
-        existing_commands = [h.get("command","") for h in settings["hooks"][hook_type] if isinstance(h, dict)]
+        existing_commands = set()
+        for existing_handler in settings["hooks"][hook_type]:
+            if not isinstance(existing_handler, dict):
+                continue
+            for hook in existing_handler.get("hooks", []) or []:
+                if isinstance(hook, dict) and hook.get("command"):
+                    existing_commands.add(hook["command"])
         for handler in handlers:
-            if handler.get("command","") not in existing_commands:
+            wanted = [h.get("command", "") for h in handler.get("hooks", []) if isinstance(h, dict)]
+            if not any(command in existing_commands for command in wanted):
                 settings["hooks"][hook_type].append(handler)
+                existing_commands.update(command for command in wanted if command)
 
 # Ensure Ralph exit policy
 settings["_ralphLoopInfiniteExitPolicy"] = {

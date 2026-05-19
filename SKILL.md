@@ -38,7 +38,8 @@ bash ~/.claude/hooks/test-ralph-refactor.sh
 | Role | Blog term | What it does |
 |---|---|---|
 | Orchestrator | GENERATOR | Drives loop, decomposes, delegates, collects evidence |
-| tester/analyst | CRITIC | Identifies concrete issues (severity 1-5, actionable suggestions) |
+| analyst-generator | GENERATOR | Decomposes prompts into traceability maps |
+| tester/analyst-critic | CRITIC | Identifies concrete issues (severity 1-5, actionable suggestions) |
 | verifier | JUDGE | Scores 5 dimensions, issues HMAC-signed PASS |
 
 **Key rules:**
@@ -88,10 +89,10 @@ MiniMax/MiniMax-M2.7 (all other agents fallback)
 Sub-agents are classified under three blog-aligned roles:
 
 **GENERATOR** (produce output, cannot stop loop):
-- orchestrator, coder, solution-architect, researcher, senior-sme
+- orchestrator, coder, solution-architect, researcher, senior-sme, analyst-generator
 
 **CRITIC** (identify issues, shape next iteration):
-- tester, analyst, qa-verifier
+- tester, analyst-critic, qa-verifier
 
 **JUDGE** (score + decide, independent):
 - verifier
