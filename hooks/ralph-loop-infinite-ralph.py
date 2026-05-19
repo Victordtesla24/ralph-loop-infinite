@@ -962,6 +962,87 @@ class RalphLoopEngine:
             "transitions": list(self.transitions),
         }
 
+    def run(
+        self,
+        *,
+        original_prompt: str,
+        max_iterations: int = 3,
+        evidence_bundle_json: str = "{}",
+        prior_output: str = "",
+        remediation: str = "",
+        backend_result_json: str = "",
+        fake_failure: dict[str, bool] | None = None,
+    ) -> Generated:
+        """Run the portable plain-Python Ralph loop and return the best Generated.
+
+        This is the hook-free engine entrypoint advocated by the Ralph-loop
+        design: a real ``while`` loop owns GENERATE → CRITIQUE → JUDGE →
+        REMEDIATE transitions. Claude Code hooks are only adapters around the
+        same stage methods; CI and local scripts can call this method directly.
+        The loop exits when JUDGE accepts or when ``max_iterations`` is reached,
+        returning the latest generated output without self-approving it.
+        """
+        max_iterations = max(1, int(max_iterations or 1))
+        fake = fake_failure or {}
+        current_prior = prior_output
+        current_remediation = remediation
+        current_backend = backend_result_json
+        generated: Generated | None = None
+        loop_records: list[dict[str, Any]] = []
+        iterations_run = 0
+
+        while iterations_run < max_iterations:
+            self.iteration = iterations_run + 1
+            iteration_result = self.run_iteration(
+                original_prompt=original_prompt,
+                prior_output=current_prior,
+                evidence_bundle_json=evidence_bundle_json or "{}",
+                remediation=current_remediation,
+                backend_result_json=current_backend,
+                fake_failure=fake,
+            )
+            iterations_run += 1
+            generated = Generated(
+                content=str(iteration_result["generated"].get("content", "")),
+                assumptions=list(iteration_result["generated"].get("assumptions", [])),
+                remediation_applied=str(iteration_result["generated"].get("remediation_applied", "")),
+                iteration=int(iteration_result["generated"].get("iteration", self.iteration)),
+                backend=str(iteration_result["generated"].get("backend", "inline")),
+                artifacts=list(iteration_result["generated"].get("artifacts", [])),
+            )
+            judgement = iteration_result["judgement"]
+            loop_records.append(
+                {
+                    "iteration": self.iteration,
+                    "decision": judgement.get("decision"),
+                    "overall_score": judgement.get("overall_score"),
+                    "generated_hash": generated.content_hash,
+                    "remediation_bytes": len(str(iteration_result.get("next_remediation_prompt", "")).encode("utf-8")),
+                }
+            )
+            if judgement.get("decision") == "accept":
+                self._transition("loop_complete", iterations_run=iterations_run, decision="accept", generated_hash=generated.content_hash)
+                break
+            current_prior = generated.content
+            current_remediation = str(iteration_result.get("next_remediation_prompt", ""))
+            current_backend = ""
+        else:
+            if generated is not None:
+                self._transition("loop_max_iterations", iterations_run=iterations_run, decision="revise", generated_hash=generated.content_hash)
+
+        if generated is None:
+            generated = self.generate(original_prompt=original_prompt, prior_output=prior_output, remediation=remediation, backend_result_json=backend_result_json)
+            iterations_run = 1
+        self.last_loop_result = {
+            "session_id": self.session_id,
+            "iterations_run": iterations_run,
+            "max_iterations": max_iterations,
+            "generated": generated.to_dict(),
+            "loop": loop_records,
+            "transitions": list(self.transitions),
+        }
+        return generated
+
 
 def _forced_fail_outputs(
     *, threshold: float, provider: str, model: str, effort: str
@@ -1168,6 +1249,38 @@ def cmd_generate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_loop(args: argparse.Namespace) -> int:
+    original_prompt = _read(args.original_prompt_file)
+    prior_output = _read(args.prior_output_file)
+    remediation = _read(args.remediation_file)
+    backend = _read(args.backend_result_file)
+    bundle = _read(args.evidence_bundle_file) or "{}"
+    fake_failure = {
+        "anthropic": os.environ.get("RALPH_FAKE_ANTHROPIC_FAIL", "0") == "1",
+        "deepseek": os.environ.get("RALPH_FAKE_DEEPSEEK_FAIL", "0") == "1",
+        "minimax": os.environ.get("RALPH_FAKE_MINIMAX_FAIL", "0") == "1",
+        "glm": os.environ.get("RALPH_FAKE_GLM_FAIL", "0") == "1",
+        "zai": os.environ.get("RALPH_FAKE_GLM_FAIL", "0") == "1",
+        "zhipu": os.environ.get("RALPH_FAKE_GLM_FAIL", "0") == "1",
+    }
+    engine = RalphLoopEngine(policy=load_policy_with_fallback(), session_id=args.session_id, iteration=1)
+    generated = engine.run(
+        original_prompt=original_prompt,
+        max_iterations=args.max_iterations,
+        evidence_bundle_json=bundle,
+        prior_output=prior_output,
+        remediation=remediation,
+        backend_result_json=backend,
+        fake_failure=fake_failure,
+    )
+    payload = dict(engine.last_loop_result)
+    payload["generated"] = generated.to_dict()
+    if args.output_file:
+        Path(args.output_file).write_text(generated.content, encoding="utf-8")
+    print(json.dumps(payload, separators=(",", ":")))
+    return 0
+
+
 def cmd_remediation(args: argparse.Namespace) -> int:
     original_prompt = _read(args.original_prompt_file)
     agent_output = _read(args.agent_output_file)
@@ -1326,11 +1439,19 @@ def cmd_self_test(args: argparse.Namespace) -> int:
         generated = engine.generate(original_prompt="prompt", prior_output="prior", remediation="fix")
         if not isinstance(generated, Generated) or not generated.content.strip():
             failures.append(f"engine.generate did not return typed Generated content: {generated}")
+        generated_loop = engine.run(
+            original_prompt="prompt",
+            max_iterations=1,
+            evidence_bundle_json="{}",
+            fake_failure={"anthropic": True, "minimax": True, "glm": True},
+        )
+        if not isinstance(generated_loop, Generated) or engine.last_loop_result.get("iterations_run") != 1:
+            failures.append(f"engine.run did not return typed Generated in standalone loop: {generated_loop}")
 
     if failures:
         print(json.dumps({"status": "FAIL", "failures": failures}, indent=2))
         return 1
-    print(json.dumps({"status": "PASS", "tests_run": 13}))
+    print(json.dumps({"status": "PASS", "tests_run": 14}))
     return 0
 
 
@@ -1354,6 +1475,16 @@ def main() -> int:
     p_g.add_argument("--session-id", required=True)
     p_g.add_argument("--iteration", type=int, required=True)
 
+    p_l = sub.add_parser("loop", help="run standalone plain-Python GENERATE→CRITIQUE→JUDGE→REMEDIATE loop")
+    p_l.add_argument("--original-prompt-file", required=True)
+    p_l.add_argument("--prior-output-file", default="")
+    p_l.add_argument("--remediation-file", default="")
+    p_l.add_argument("--backend-result-file", default="")
+    p_l.add_argument("--evidence-bundle-file", default="")
+    p_l.add_argument("--output-file", default="")
+    p_l.add_argument("--session-id", required=True)
+    p_l.add_argument("--max-iterations", type=int, default=3)
+
     p_r = sub.add_parser("remediation", help="emit the canonical remediation prompt")
     p_r.add_argument("--original-prompt-file", required=True)
     p_r.add_argument("--agent-output-file", required=True)
@@ -1374,6 +1505,8 @@ def main() -> int:
         return cmd_judge(args)
     if args.cmd == "generate":
         return cmd_generate(args)
+    if args.cmd == "loop":
+        return cmd_loop(args)
     if args.cmd == "remediation":
         return cmd_remediation(args)
     if args.cmd == "creds-check":

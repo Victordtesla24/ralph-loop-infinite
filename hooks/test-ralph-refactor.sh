@@ -404,6 +404,11 @@ if echo "$T7_WIRING" | grep -q '"precheck_has_generator_before_block": true' && 
 else
   fail "stop hook generator wiring missing: $T7_WIRING"
 fi
+if grep -q 'RALPH_CONVERGENCE_EXIT' "$STOP_SH" && grep -q 'CONVERGENCE_RETURN' "$STOP_SH"; then
+  pass "stop hook provides explicit RALPH_CONVERGENCE_EXIT=1 blog-compatible return mode"
+else
+  fail "stop hook missing explicit blog-compatible convergence return mode"
+fi
 if grep -q 'RALPH_GENERATED_OUTPUT_FILE' "$STOP_SH" && grep -q '\$RALPH_HELPER" generate' "$STOP_SH"; then
   pass "stop hook adapts sidecar generator through first-class ralph.py Generated stage"
 else
@@ -434,7 +439,59 @@ fi
 
 # --------------------------------------------------------------------------
 echo
-printf '[8] DB self-test + Ralph helper self-test\n'
+printf '[8] Standalone Python loop driver: run() while-loop + CLI loop subcommand\n'
+# --------------------------------------------------------------------------
+T8_OUT=$(python3 - "$RALPH_HELPER" <<'PY'
+import importlib.util, json, sys, types
+spec = importlib.util.spec_from_file_location("ralph_loop", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+sys.modules["ralph_loop"] = mod
+spec.loader.exec_module(mod)
+if not hasattr(mod.RalphLoopEngine, "run"):
+    print(json.dumps({"ok": False, "reason": "RalphLoopEngine.run missing"}))
+    raise SystemExit(0)
+engine = mod.RalphLoopEngine(policy={"provider":"anthropic","model_primary":"claude-opus-4-7","scoring_threshold":0.8}, session_id="standalone", iteration=1)
+calls = []
+def fake_generate(self, *, original_prompt, prior_output="", remediation="", backend_result_json=""):
+    calls.append(["generate", self.iteration, prior_output, bool(remediation)])
+    return mod.Generated(content=f"generated-{self.iteration}", iteration=self.iteration, remediation_applied=remediation)
+def fake_critique(self, *, original_prompt, generated, evidence_bundle_json, fake_failure=None):
+    calls.append(["critique", self.iteration, generated.content])
+    return mod.Critique(issues=["gap"] if self.iteration == 1 else [], severity=[4] if self.iteration == 1 else [], suggestions=["fix gap"] if self.iteration == 1 else [])
+def fake_judge(self, *, original_prompt, generated, evidence_bundle_json, critique, effort=None, fake_failure=None):
+    calls.append(["judge", self.iteration, generated.content])
+    decision = "revise" if self.iteration == 1 else "accept"
+    score = 0.5 if decision == "revise" else 0.95
+    return mod.Judgement(decision=decision, overall_score=score, threshold=0.8, breakdown={d: mod.DimensionScore(score, "mock") for d in mod.SCORING_DIMENSIONS}, reasoning="mock")
+def fake_remediate(self, *, original_prompt, generated, critique):
+    calls.append(["remediate", self.iteration, generated.content])
+    return "apply targeted remediation"
+engine.generate = types.MethodType(fake_generate, engine)
+engine.critique = types.MethodType(fake_critique, engine)
+engine.judge = types.MethodType(fake_judge, engine)
+engine.remediate = types.MethodType(fake_remediate, engine)
+out = engine.run(original_prompt="build portable loop", max_iterations=3)
+print(json.dumps({"ok": isinstance(out, mod.Generated), "content": out.content, "iteration": out.iteration, "calls": calls}))
+PY
+)
+if echo "$T8_OUT" | grep -q '"ok": true' && echo "$T8_OUT" | grep -q '"content": "generated-2"' && echo "$T8_OUT" | grep -q '"remediate"'; then
+  pass "RalphLoopEngine.run executes generate→critique→judge→remediate while-loop to acceptance: $T8_OUT"
+else
+  fail "RalphLoopEngine.run standalone loop missing or wrong: $T8_OUT"
+fi
+T8_TMP=$(mktemp -d)
+echo "standalone prompt" > "$T8_TMP/orig.txt"
+LOOP_CLI_OUT=$(RALPH_FAKE_ANTHROPIC_FAIL=1 RALPH_FAKE_MINIMAX_FAIL=1 RALPH_FAKE_GLM_FAIL=1 python3 "$RALPH_HELPER" loop --original-prompt-file "$T8_TMP/orig.txt" --session-id cli-loop --max-iterations 1 2>&1)
+if echo "$LOOP_CLI_OUT" | grep -q '"generated"' && echo "$LOOP_CLI_OUT" | grep -q '"iterations_run":1'; then
+  pass "ralph.py loop subcommand runs standalone without Claude Code hooks"
+else
+  fail "ralph.py loop subcommand failed: $(echo "$LOOP_CLI_OUT" | head -1)"
+fi
+rm -rf "$T8_TMP"
+
+# --------------------------------------------------------------------------
+echo
+printf '[9] DB self-test + Ralph helper self-test\n'
 # --------------------------------------------------------------------------
 DB_SELF=$(python3 "$DB_HELPER_SBX" self-test 2>&1)
 if echo "$DB_SELF" | grep -q '"status": "PASS"'; then

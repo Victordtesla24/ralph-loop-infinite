@@ -53,7 +53,7 @@ bash bootstrap.sh
 [3/6] Registering contract hashes (~/.claude/manifest/contract-hashes.json)
 [4/6] Creating state directory (~/.claude/state/)
 [5/6] Initializing SQLite database
-[6/6] Running self-test (PASS 22 / FAIL 0)
+[6/6] Running self-test (PASS 25 / FAIL 0)
 ```
 
 ### Post-Install Configuration
@@ -129,9 +129,12 @@ GENERATE → CRITIQUE → JUDGE → REMEDIATE → (repeat until JUDGE PASS)
 ```
 HMAC-SIGNED PASS              MAX_ITERATIONS (default: 3)      CONVERGENCE
 all 5 dims ≥ 0.80            → best-iteration output,          score ≤ prev
-+ all artifacts present      verifier_last_verdict=            → targeted
-                              MAX_REACHED_RETURN, allow          escalation,
++ all artifacts present      verifier_last_verdict=            → strict default:
+                              MAX_REACHED_RETURN, allow          targeted escalation,
                                                                  NOT blocker
+                                                                 blog mode:
+                                                                 RALPH_CONVERGENCE_EXIT=1
+                                                                 returns current output
 ```
 
 ### Sub-Agent Hierarchy
@@ -245,7 +248,7 @@ ralph-loop-infinite/
 bash ~/.claude/hooks/test-ralph-refactor.sh
 ```
 
-Expected: **PASS 22 / FAIL 0**
+Expected: **PASS 25 / FAIL 0**
 
 Tests enforce:
 - Threshold ≥ 0.80 on all five dimensions

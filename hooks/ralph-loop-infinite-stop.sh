@@ -1039,9 +1039,30 @@ PY
         --set "verifier_last_score=${CURRENT_SCORE}" \
         --set "verifier_last_verdict=CONVERGENCE" \
         --set "remediation_explicit_blocker=false" >/dev/null 2>&1 || true
+      # Default production gate is stricter than the blog: convergence escalates
+      # because only HMAC-signed PASS exits. Operators who need exact blog
+      # semantics can opt in with RALPH_CONVERGENCE_EXIT=1, which returns the
+      # current output on convergence without granting verifier PASS.
+      if [[ "${RALPH_CONVERGENCE_EXIT:-0}" == "1" ]]; then
+        python3 "$DB_HELPER" state-update \
+          --session-id "${HOOK_SESSION:-unknown}" \
+          --set "verifier_last_verdict=CONVERGENCE_RETURN" \
+          --set "verifier_last_reason=blog convergence return: score $CURRENT_SCORE <= previous $PREV_SCORE" \
+          --set "remediation_explicit_blocker=false" >/dev/null 2>&1 || true
+        python3 "$DB_HELPER" event \
+          --hook "stop" \
+          --session-id "${HOOK_SESSION:-unknown}" \
+          --event-type "convergence-return" \
+          --data-json '{"reason":"blog-convergence-return","iteration":'"$ITERATION"',"current_score":'"$CURRENT_SCORE"',"prev_score":'"$PREV_SCORE"',"status":"'"$CONV_STATUS"'"}' >/dev/null 2>&1 || true
+        log "ALLOW convergence return mode iter=$ITERATION sess=${HOOK_SESSION:-unknown} score=$CURRENT_SCORE prev=$PREV_SCORE"
+        jq -n --arg msg "Ralph-loop-infinite convergence return mode enabled: score $CURRENT_SCORE <= previous $PREV_SCORE (iteration $ITERATION). Returning current output per Ralph blog semantics; no verifier PASS was granted." '{decision:"allow", reason:$msg}'
+        exit 0
+      fi
       # NOT a blocker — escalation only. Agent cannot exit via convergence.
-      # Blog rule: loop continues with escalated remediation. Only HMAC-signed
-      # PASS exits. Convergence is a signal to change strategy, not permission to quit.
+      # Default gate deviation from the blog: loop continues with escalated
+      # remediation unless RALPH_CONVERGENCE_EXIT=1 is explicitly enabled.
+      # Only HMAC-signed PASS exits in strict mode. Convergence is a signal to
+      # change strategy, not permission to quit.
       python3 "$DB_HELPER" event \
         --hook "stop" \
         --session-id "${HOOK_SESSION:-unknown}" \
