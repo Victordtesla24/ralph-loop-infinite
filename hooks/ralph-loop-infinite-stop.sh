@@ -1030,24 +1030,42 @@ except Exception: print("")' 2>/dev/null)
   CURRENT_SCORE=$(printf '%s' "$VERIFIER_OUT" | python3 -c 'import sys,json; obj=json.load(sys.stdin); print(float(obj.get("overall_score",obj.get("score",-1))))' 2>/dev/null || echo "-1")
   PREV_SCORE=$(db_state_get "verifier_last_score")
   [[ -z "$PREV_SCORE" ]] && PREV_SCORE=$(grep '^verifier_last_score:' "$STATE_FILE" 2>/dev/null | sed 's/verifier_last_score: *//' | tr -d '[:space:]' || echo "")
+  # Convergence detection: classify the score trajectory and populate
+  # CONV_STATUS so the downstream RALPH_CONVERGENCE_EXIT=1 / escalation
+  # branches can actually fire.
+  #
+  # Prior versions of this block had two pathological bugs that combined
+  # to make convergence detection unreachable on every FAIL:
+  #   (1) The first `python3 - <<'PY' ...` heredoc had top-level Python
+  #       indented under 4 spaces, which raises IndentationError, and its
+  #       stdout was uncaptured (logged to the parent shell).
+  #   (2) The second `python3 - "$CURRENT_SCORE" "$PREV_SCORE"` invocation
+  #       at the same level read from the parent shell's stdin (the Stop
+  #       hook JSON) with no script, producing no output. CONV_STATUS was
+  #       therefore always empty, and the downstream `if [[ "$CONV_STATUS"
+  #       == "STAGNATION" || "$CONV_STATUS" == "REGRESSION" ]]` branch
+  #       was dead code — meaning the RALPH_CONVERGENCE_EXIT=1 opt-in
+  #       silently never executed.
+  # The single command-substitution heredoc below uses env vars (avoids
+  # argv quirks) and checks REGRESSION first (it was previously masked
+  # by the STAGNATION elif, but downstream treats both identically).
   CONVERGENCE_BLOCK=0
   if [[ "$ITERATION" =~ ^[0-9]+$ && "$ITERATION" -gt 0 && -n "$PREV_SCORE" && "$PREV_SCORE" =~ ^-?[0-9.]+$ ]]; then
-    python3 - <<'PY' "${CURRENT_SCORE}" "${PREV_SCORE}"
-    import sys
-    try:
-        cur=float(sys.argv[1]); prev=float(sys.argv[2])
-        # Stagnation: score not improving
-        if cur <= prev and cur >= 0:
-            print("STAGNATION")
-        # Regression: score actually got worse
-        elif cur < prev:
-            print("REGRESSION")
-        else:
-            print("IMPROVING")
-    except:
-        print("UNKNOWN")
+    CONV_STATUS=$(CURRENT_SCORE="$CURRENT_SCORE" PREV_SCORE="$PREV_SCORE" python3 - <<'PY' 2>/dev/null || echo "UNKNOWN"
+import os
+try:
+    cur = float(os.environ.get("CURRENT_SCORE", "0") or "0")
+    prev = float(os.environ.get("PREV_SCORE", "0") or "0")
+    if cur < prev:
+        print("REGRESSION")
+    elif cur <= prev and cur >= 0:
+        print("STAGNATION")
+    else:
+        print("IMPROVING")
+except Exception:
+    print("UNKNOWN")
 PY
-    CONV_STATUS=$(python3 - "${CURRENT_SCORE}" "${PREV_SCORE}" 2>/dev/null)
+)
     if [[ "$CONV_STATUS" == "STAGNATION" || "$CONV_STATUS" == "REGRESSION" ]]; then
       CONVERGENCE_BLOCK=1
       TS_NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

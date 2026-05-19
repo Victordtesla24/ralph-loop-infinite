@@ -165,7 +165,27 @@ Workers do NOT self-assess. Orchestrator routes to JUDGE. Only JUDGE can stop th
 
 On verifier FAIL or evidence PRECHECK_FAIL, `ralph-loop-infinite-stop.sh` deterministically invokes `ralph-loop-infinite-generator.py`, which dispatches explicit `orchestrator,coder,tester` stages through `scripts/ralph-spawn.sh` (configurable via `RALPH_GENERATOR_ROLES`). Success requires every required stage to exit 0 and write an evidence artifact. The Stop hook monitors and records state; the generator subprocess is the autonomous executor backend.
 
-> **Verifier architecture note:** The JUDGE is **not** spawned as a separate sub-agent process. Instead, `ralph-loop-infinite-verifier.sh` calls `ralph-loop-infinite-ralph.py judge`, which runs the `critique_and_judge()` Python function — making two API calls (CRITIC, then JUDGE) with separate system prompts, parsing structured JSON responses, and enforcing the scoring contract in code. The HMAC signing happens in the shell after the Python judge returns. The `sub-agents/verifier/` directory and `verifier.SOUL.md` contain the JUDGE role contract used by the prompts, not an independently running agent.
+ **Verifier architecture note:** The JUDGE is **not** spawned as a separate sub-agent process. Instead, `ralph-loop-infinite-verifier.sh` calls `ralph-loop-infinite-ralph.py judge`, which runs the `critique_and_judge()` Python function — making two API calls (CRITIC, then JUDGE) with separate system prompts, parsing structured JSON responses, and enforcing the scoring contract in code. The HMAC signing happens in the shell after the Python judge returns. The `sub-agents/verifier/` directory and `verifier.SOUL.md` contain the JUDGE role contract used by the prompts, not an independently running agent.
+
+#### Implementation note — what "sub-agent" actually means here
+
+The hierarchy diagram describes **roles**, not always **coordinated processes**. In the current implementation, the GENERATOR roles (orchestrator, coder, etc.) are GCJ-classified system prompts dispatched as **fresh-context, one-shot `claude` CLI invocations** by `scripts/ralph-spawn.sh`; the CRITIC + JUDGE roles are Python functions inside `ralph.py` (`critic_only()` and `judge_only()`) called by `verifier.sh` — see the "Verifier architecture note" above. On a verifier FAIL the Stop hook spawns the GENERATOR roles *sequentially*; each gets the same task text but no shared memory, no message bus, and no orchestrator-driven re-dispatch within the same FAIL cycle. The only state that survives across role spawns is on-disk: evidence-file artifacts and the SQLite DB.
+
+What this **is**:
+
+- Role-classified prompt dispatch with enforced GCJ semantics (GENERATOR cannot self-PASS, CRITIC cannot decide, only JUDGE HMAC-signs).
+- Fresh-context isolation per GENERATOR role (separate process, no context bleed).
+- Independent JUDGE — runs as a Python function with its own API key and provider lineage, distinct from the working agent and forced onto a different model lineage when it would collide with the primary.
+- Schema-validated artifacts at `~/.claude/state/ralph-generator-artifacts/`.
+- Graceful degradation when the `claude` CLI is absent: the Stop hook logs `CLAUDE_CLI_MISSING` and falls back to the inline `RalphLoopEngine.generate(...)` path.
+
+What this **is not** (yet):
+
+- A coordinated agent runtime where the orchestrator dynamically routes to workers based on intermediate results.
+- A persistent message bus between roles within a single iteration.
+- The Hermes Kanban coordination layer described in `CLAUDE.md §5.1` is an external planning surface, not an in-loop dispatcher — see that section for the seeding script and intended schema.
+
+If you need a true agent framework, treat this as the enforcement skin around the loop and bring your own orchestrator. The provided sub-agents are credible role-classified prompts, not a multi-agent runtime.
 
 ---
 
