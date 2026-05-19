@@ -53,7 +53,7 @@ bash bootstrap.sh
 [3/6] Registering contract hashes (~/.claude/manifest/contract-hashes.json)
 [4/6] Creating state directory (~/.claude/state/)
 [5/6] Initializing SQLite database
-[6/6] Running self-test (PASS 19 / FAIL 0)
+[6/6] Running self-test (PASS 22 / FAIL 0)
 ```
 
 ### Post-Install Configuration
@@ -245,7 +245,7 @@ ralph-loop-infinite/
 bash ~/.claude/hooks/test-ralph-refactor.sh
 ```
 
-Expected: **PASS 19 / FAIL 0**
+Expected: **PASS 22 / FAIL 0**
 
 Tests enforce:
 - Threshold ≥ 0.80 on all five dimensions
