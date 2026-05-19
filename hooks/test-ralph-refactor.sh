@@ -24,9 +24,17 @@ for arg in "$@"; do
 done
 STAGED_DIR="${STAGED_DIR:-/tmp/ralph-refactor/hooks}"
 LIVE_DIR="${LIVE_DIR:-/Users/vic/.claude/hooks}"
-if [[ "$STAGED_DIR" == "$LIVE_DIR" && "$ALLOW_LIVE" -ne 1 ]]; then
+STAGED_REAL=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$STAGED_DIR")
+LIVE_REAL=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$LIVE_DIR")
+if [[ "$STAGED_REAL" == "$LIVE_REAL" && "$ALLOW_LIVE" -ne 1 ]]; then
   echo "ERROR: STAGED_DIR resolves to LIVE_DIR ($LIVE_DIR). Refusing to mutate/audit live hooks without --allow-live." >&2
   exit 2
+fi
+if [[ ! -d "$STAGED_DIR" || -z "$(find "$STAGED_DIR" -maxdepth 1 -type f -print -quit 2>/dev/null)" ]]; then
+  mkdir -p "$STAGED_DIR"
+  for f in "$LIVE_DIR"/*; do
+    [[ -f "$f" ]] && cp "$f" "$STAGED_DIR/"
+  done
 fi
 SBX_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/rli-refactor-test.XXXXXX")
 trap 'rm -rf "$SBX_ROOT" 2>/dev/null || true' EXIT INT TERM
@@ -191,7 +199,7 @@ fi
 if grep -q 'def call_minimax' "$RALPH_HELPER" \
    && grep -q 'def call_glm' "$RALPH_HELPER" \
    && grep -q 'provider_attempt' "$RALPH_HELPER" \
-   && grep -q '"fallback": fb' "$RALPH_HELPER"; then
+   && grep -q '"fallback": is_fallback' "$RALPH_HELPER"; then
   pass "ralph helper has explicit MiniMax/GLM call paths with logged fallback"
 else
   fail "ralph helper missing MiniMax/GLM call paths or fallback log"
@@ -207,10 +215,10 @@ RALPH_FAKE_ANTHROPIC_FAIL=1 RALPH_FAKE_MINIMAX_FAIL=1 \
     --agent-output-file "$T3_AGENT" \
     --session-id test --iteration 1 >/dev/null 2>&1 || true
 rm -f "$T3_PROMPT" "$T3_AGENT"
-if [[ -f "$T3_LOG" ]] && grep -q 'judge_all_providers_failed' "$T3_LOG"; then
-  pass "thinking-loop log records explicit primary+fallback failure (never silent)"
+if [[ -f "$T3_LOG" ]] && grep -Eq 'provider_(fail|skip)' "$T3_LOG" && grep -q 'offline-rule-based' "$T3_LOG"; then
+  pass "thinking-loop log records explicit provider failure/skip and labelled offline fallback (never silent)"
 else
-  fail "thinking-loop log missing primary+fallback failure record"
+  fail "thinking-loop log missing provider failure/skip or labelled offline fallback record"
 fi
 # Secret-leak guard: no API key bytes appear in any state file.
 if grep -RE 'sk-(ant|deep|live|test)|ds-[A-Za-z0-9]{6,}' "$HOME/.claude/state" 2>/dev/null | grep -v thinking-loop.jsonl; then

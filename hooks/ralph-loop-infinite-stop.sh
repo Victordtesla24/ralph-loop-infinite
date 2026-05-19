@@ -969,11 +969,11 @@ except Exception: print("")' 2>/dev/null)
     exit 0
   fi
 
-  db_record_verifier "${HOOK_SESSION:-unknown}" "$ITERATION" "$VERDICT_OUT" "$HMAC_VALID"
+  db_record_verifier "${HOOK_SESSION:-unknown}" "$ITERATION" "$VERIFIER_OUT" "$HMAC_VALID"
 
   # ── Convergence check (blog: "if iteration > 0 and judgement.score <= prev_score: break") ──
   # Run AFTER recording state so prev_score is available. Only meaningful when iteration > 0.
-  CURRENT_SCORE=$(printf '%s' "$VERDICT_OUT" | python3 -c 'import sys,json; obj=json.load(sys.stdin); print(float(obj.get("overall_score",obj.get("score",-1))))' 2>/dev/null || echo "-1")
+  CURRENT_SCORE=$(printf '%s' "$VERIFIER_OUT" | python3 -c 'import sys,json; obj=json.load(sys.stdin); print(float(obj.get("overall_score",obj.get("score",-1))))' 2>/dev/null || echo "-1")
   PREV_SCORE=$(db_state_get "verifier_last_score")
   [[ -z "$PREV_SCORE" ]] && PREV_SCORE=$(grep '^verifier_last_score:' "$STATE_FILE" 2>/dev/null | sed 's/verifier_last_score: *//' | tr -d '[:space:]' || echo "")
   CONVERGENCE_BLOCK=0
@@ -1032,7 +1032,7 @@ PY
     --session-id "${HOOK_SESSION:-unknown}" \
     --set "verifier_last_score=${CURRENT_SCORE}" >/dev/null 2>&1 || true
 
-  REASON=$(printf '%s' "$VERDICT_OUT" | python3 -c 'import sys,json
+  REASON=$(printf '%s' "$VERIFIER_OUT" | python3 -c 'import sys,json
 try:
     obj=json.load(sys.stdin)
     parts=(obj.get("missing") or [])+(obj.get("deviations") or [])
