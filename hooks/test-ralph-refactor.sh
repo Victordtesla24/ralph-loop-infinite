@@ -404,6 +404,11 @@ if echo "$T7_WIRING" | grep -q '"precheck_has_generator_before_block": true' && 
 else
   fail "stop hook generator wiring missing: $T7_WIRING"
 fi
+if grep -q 'RALPH_GENERATED_OUTPUT_FILE' "$STOP_SH" && grep -q '\$RALPH_HELPER" generate' "$STOP_SH"; then
+  pass "stop hook adapts sidecar generator through first-class ralph.py Generated stage"
+else
+  fail "stop hook does not route sidecar generator output through first-class Generated stage"
+fi
 
 GENERATOR_HELPER="$SBX_ROOT/.claude/hooks/ralph-loop-infinite-generator.py"
 FAKE_SPAWN="$SBX_ROOT/fake-spawn.sh"

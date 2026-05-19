@@ -52,6 +52,7 @@ REMEDIATION_PROMPT_FILE="$HOME/.claude/state/ralph-remediation-prompt.txt"
 TSPARSE="$HOME/.claude/hooks/ralph-loop-infinite-tsparse.py"
 POLICY_HELPER="$HOME/.claude/hooks/ralph-loop-infinite-policy.py"
 EVIDENCE_HELPER="$HOME/.claude/hooks/ralph-loop-infinite-evidence.py"
+RALPH_HELPER="$HOME/.claude/hooks/ralph-loop-infinite-ralph.py"
 REMEDIATION_PROMPT_FILE="$HOME/.claude/state/ralph-remediation-prompt.txt"
 
 mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$VIOLATIONS_FILE")"
@@ -80,8 +81,26 @@ run_generator_once() {
     --remediation-file "$REMEDIATION_PROMPT_FILE" \
     --agent-output-file "${AGENT_OUTPUT_FILE:-}" \
     "${dry_arg[@]}" > "$gen_log" 2>&1; then
-    log "GENERATOR_RUN_OK iter=$ITERATION sess=${HOOK_SESSION:-unknown} log=$gen_log"
-    return 0
+    local generated_out="$HOME/.claude/state/ralph-generated-output.txt"
+    local generated_json="$HOME/.claude/state/ralph-generated-last.json"
+    if [[ -x "$RALPH_HELPER" ]]; then
+      if python3 "$RALPH_HELPER" generate \
+        --session-id "${HOOK_SESSION:-unknown}" \
+        --iteration "$ITERATION" \
+        --original-prompt-file "${ORIGINAL_PROMPT_PATH:-$HOME/.claude/state/original-user-prompt.txt}" \
+        --prior-output-file "${AGENT_OUTPUT_FILE:-}" \
+        --remediation-file "$REMEDIATION_PROMPT_FILE" \
+        --backend-result-file "$gen_log" \
+        --output-file "$generated_out" > "$generated_json" 2>&1; then
+        chmod 600 "$generated_out" "$generated_json" 2>/dev/null || true
+        log "GENERATOR_RUN_OK iter=$ITERATION sess=${HOOK_SESSION:-unknown} log=$gen_log RALPH_GENERATED_OUTPUT_FILE=$generated_out generated_json=$generated_json"
+        return 0
+      fi
+      log "GENERATOR_TYPED_STAGE_FAIL iter=$ITERATION sess=${HOOK_SESSION:-unknown} helper=$RALPH_HELPER generated_json=$generated_json"
+      return 1
+    fi
+    log "GENERATOR_TYPED_STAGE_SKIP helper_missing=$RALPH_HELPER iter=$ITERATION sess=${HOOK_SESSION:-unknown} log=$gen_log"
+    return 1
   fi
   local rc=$?
   log "GENERATOR_RUN_FAIL iter=$ITERATION sess=${HOOK_SESSION:-unknown} rc=$rc log=$gen_log"
