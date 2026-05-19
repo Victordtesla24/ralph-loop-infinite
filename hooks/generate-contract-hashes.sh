@@ -17,6 +17,7 @@ MANIFEST="$MANIFEST_DIR/contract-hashes.json"
 PROTECTED_FILES=(
   "$HOME/.claude/CLAUDE.md"
   "$HOME/.claude/AGENTS.md"
+  "$HOME/.claude/.claude.json"
   "$HOME/.codex/CLAUDE.md"
   "$HOME/.codex/AGENTS.md"
   "$HOME/CLAUDE.md"

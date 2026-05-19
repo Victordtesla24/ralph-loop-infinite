@@ -1,0 +1,14 @@
+{
+  "_ralphLoopInfiniteExitPolicy": {},
+  "numStartups": 0,
+  "installMethod": "ralph-loop-infinite-bootstrap",
+  "autoUpdates": false,
+  "hasSeenTasksHint": false,
+  "hasUsedBackgroundTask": false,
+  "tipsHistory": {},
+  "promptQueueUseCount": 0,
+  "btwUseCount": 0,
+  "cachedGrowthBookFeatures": {
+    "ralph_loop": true
+  }
+}
