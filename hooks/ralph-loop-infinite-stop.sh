@@ -71,6 +71,25 @@ run_generator_once() {
     log "GENERATOR_DISABLE_REJECTED requires_RALPH_TEST_MODE=1"
   fi
   [[ -x "$GENERATOR_HELPER" ]] || { log "GENERATOR_SKIP helper_missing=$GENERATOR_HELPER"; return 1; }
+  local claude_cmd="${RALPH_SPAWN_CLAUDE_CMD:-claude}"
+  if ! command -v "$claude_cmd" >/dev/null 2>&1; then
+    local generated_out="$HOME/.claude/state/ralph-generated-output.txt"
+    local generated_json="$HOME/.claude/state/ralph-generated-last.json"
+    log "CLAUDE_CLI_MISSING cmd=$claude_cmd downgrade=inline-only-generator iter=$ITERATION sess=${HOOK_SESSION:-unknown}"
+    if [[ -x "$RALPH_HELPER" ]] && python3 "$RALPH_HELPER" generate \
+      --session-id "${HOOK_SESSION:-unknown}" \
+      --iteration "$ITERATION" \
+      --original-prompt-file "${ORIGINAL_PROMPT_PATH:-$HOME/.claude/state/original-user-prompt.txt}" \
+      --prior-output-file "${AGENT_OUTPUT_FILE:-}" \
+      --remediation-file "$REMEDIATION_PROMPT_FILE" \
+      --output-file "$generated_out" > "$generated_json" 2>&1; then
+      chmod 600 "$generated_out" "$generated_json" 2>/dev/null || true
+      log "GENERATOR_INLINE_ONLY_OK iter=$ITERATION sess=${HOOK_SESSION:-unknown} RALPH_GENERATED_OUTPUT_FILE=$generated_out generated_json=$generated_json"
+      return 0
+    fi
+    log "GENERATOR_INLINE_ONLY_FAIL iter=$ITERATION sess=${HOOK_SESSION:-unknown} helper=$RALPH_HELPER"
+    return 1
+  fi
   local gen_log="$HOME/.claude/state/ralph-generator-last.json"
   local dry_arg=()
   [[ "${RALPH_GENERATOR_DRY_RUN:-0}" == "1" ]] && dry_arg=(--dry-run)

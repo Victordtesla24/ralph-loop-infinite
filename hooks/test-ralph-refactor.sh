@@ -409,6 +409,11 @@ if grep -q 'RALPH_CONVERGENCE_EXIT' "$STOP_SH" && grep -q 'CONVERGENCE_RETURN' "
 else
   fail "stop hook missing explicit blog-compatible convergence return mode"
 fi
+if grep -q 'CLAUDE_CLI_MISSING' "$STOP_SH" && grep -q 'GENERATOR_INLINE_ONLY_OK' "$STOP_SH"; then
+  pass "stop hook logs missing Claude CLI and downgrades to inline-only generator"
+else
+  fail "stop hook missing Claude CLI fallback to inline-only generator"
+fi
 if grep -q 'RALPH_GENERATED_OUTPUT_FILE' "$STOP_SH" && grep -q '\$RALPH_HELPER" generate' "$STOP_SH"; then
   pass "stop hook adapts sidecar generator through first-class ralph.py Generated stage"
 else

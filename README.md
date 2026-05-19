@@ -53,8 +53,14 @@ bash bootstrap.sh
 [3/6] Registering contract hashes (~/.claude/manifest/contract-hashes.json)
 [4/6] Creating state directory (~/.claude/state/)
 [5/6] Initializing SQLite database
-[6/6] Running self-test (PASS 25 / FAIL 0)
+[6/6] Running self-test (PASS 26 / FAIL 0)
 ```
+
+### Runtime Dependencies
+
+- `python3`, `bash`, and `jq` are required for hook enforcement, evidence checks, and JSON signing paths.
+- The optional sub-agent fan-out path uses the Claude CLI binary from `RALPH_SPAWN_CLAUDE_CMD` or `claude` on `PATH`.
+- If the Claude CLI is absent (common in CI), the Stop hook logs `CLAUDE_CLI_MISSING` and downgrades generator retry to the repository-local inline `RalphLoopEngine.generate(...)` path instead of silently failing the whole loop.
 
 ### Post-Install Configuration
 
@@ -248,7 +254,7 @@ ralph-loop-infinite/
 bash ~/.claude/hooks/test-ralph-refactor.sh
 ```
 
-Expected: **PASS 25 / FAIL 0**
+Expected: **PASS 26 / FAIL 0**
 
 Tests enforce:
 - Threshold ≥ 0.80 on all five dimensions
