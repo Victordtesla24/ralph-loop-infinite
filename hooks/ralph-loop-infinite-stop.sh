@@ -284,12 +284,20 @@ def age(ts):
     except Exception:
         return -1
 age_now = age(obj.get("issued_at", ""))
-ttl = 120
+# TTL configurable via env var; expired pass triggers re-sign, not hard block
+TTL_SECONDS="${RALPH_PASS_TTL_SECONDS:-120}"
+ttl = TTL_SECONDS
 if age_now < 0:
-    print(json.dumps({"ok": False, "reason": f"issued_at unparseable: {obj.get('issued_at')}"}))
+    print(json.dumps({"ok": False, "reason": f"issued_at unparseable: {obj.get('issued_at')}"})  )
     raise SystemExit(0)
 if age_now > ttl:
-    print(json.dumps({"ok": False, "reason": f"pass expired age={age_now}s > {ttl}s"}))
+    print(json.dumps({
+        "ok": False,
+        "reason": f"pass expired age={age_now}s > {ttl}s — re-verification triggered",
+        "re_sign": True,
+        "expired_age_s": age_now,
+        "ttl_s": ttl
+    }))
     raise SystemExit(0)
 
 # Provider/model policy
@@ -314,7 +322,28 @@ PY
 
 HOOK_INPUT=$(cat)
 
+# Fix 3: Fail-closed on missing state file — only exit 0 if loop was never armed
 if [[ ! -f "$STATE_FILE" ]]; then
+  # Check DB: is a Ralph session active?
+  db_init 2>/dev/null || true
+  DB_SESSION=$(python3 -c "
+import sys, json
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    try:
+        d = json.loads(line)
+        for row in d if isinstance(d, list) else [d]:
+            print(row.get('session_id','') or row.get('value',''), flush=True)
+    except: pass
+" < /dev/null 2>/dev/null || echo "")
+
+  if [[ -n "$DB_SESSION" && "$DB_SESSION" != "None" ]]; then
+    # Loop was armed via DB but state file is missing — fail closed
+    echo "ralph-gate: STOP BLOCKED — state file missing while Ralph session active in DB" >&2
+    exit 0
+  fi
+  # Loop never armed — nothing to do
   exit 0
 fi
 
@@ -331,6 +360,31 @@ HOOK_SESSION=$(echo "$HOOK_INPUT" | jq -r '
 ' 2>/dev/null || echo "")
 
 TRANSCRIPT=$(echo "$HOOK_INPUT" | jq -r '.transcript_path // .transcriptPath // ""' 2>/dev/null || echo "")
+
+# ── Fix 2: Allowlist file HMAC integrity check ─────────────────
+verify_allowlist_integrity() {
+  local ALLOWLIST_FILE="${HOME}/.claude/state/allowed_workers"
+  local ALLOWLIST_HMAC_FILE="${HOME}/.claude/secrets/ralph-allowlist.hmac"
+  [[ ! -f "$ALLOWLIST_FILE" ]] && return 0
+  [[ ! -f "$ALLOWLIST_HMAC_FILE" ]] && { log "BLOCK: allowlist exists but has no HMAC file"; return 1; }
+  local expected actual
+  expected=$(cat "$ALLOWLIST_HMAC_FILE" 2>/dev/null | tr -d '[:space:]' || echo "")
+  actual=$(python3 -c "
+import hmac, hashlib
+with open('$ALLOWLIST_FILE','rb') as f:
+    with open('$HOME/.claude/secrets/ralph-hmac.key','rb') as k:
+        digest = hmac.new(k.read(), f.read(), hashlib.sha256).hexdigest()
+        print(digest)
+" 2>/dev/null || echo "")
+  [[ "\$expected" == "\$actual" ]] || { log "BLOCK: allowlist file tampered"; return 1; }
+  return 0
+}
+
+# Run allowlist HMAC check on every Stop hook invocation
+if ! verify_allowlist_integrity; then
+  emit_block     "Ralph-loop-infinite gate ARMED: allowlist file integrity check failed (HMAC mismatch). File may have been tampered with. The gate fails closed."     "allowlist-hmac-fail"     "ralph-gate: STOP BLOCKED — allowlist integrity check failed"
+  exit 0
+fi
 
 SESSION_MISMATCH=0
 if [[ -n "$STATE_SESSION" && -n "$HOOK_SESSION" && "$STATE_SESSION" != "$HOOK_SESSION" ]]; then
@@ -370,6 +424,18 @@ if [[ "$STATE_VERIFIER_PASS" == "true" ]]; then
     exit 0
   fi
   REASON_TEXT=$(echo "$PASS_INFO" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("reason","unsigned or expired"))' 2>/dev/null || echo "unsigned or expired")
+  # Fix 1: TTL Race — re-sign trigger instead of hard block
+  IS_RE_SIGN=$(echo "$PASS_INFO" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("re_sign","false"))' 2>/dev/null || echo "false")
+  if [[ "$IS_RE_SIGN" == "True" ]]; then
+    # Re-verification triggered — invalidate current pass and let loop continue
+    python3 "$DB_HELPER" state-update --key verifier_pass --value false --state-file "$STATE_FILE" 2>/dev/null || true
+    log "RE-SIGN TRIGGERED: pass expired, verifier_pass cleared — loop continues with fresh verifier call"
+    emit_block \
+      "Ralph-loop-infinite gate: verifier PASS expired (age > ${RALPH_PASS_TTL_SECONDS:-120}s). Pass invalidated for re-sign. A fresh HMAC-signed verifier verdict is required. Loop continues." \
+      "pass-expired-re-sign" \
+      "ralph-gate: RE-SIGN TRIGGERED — PASS invalidated, re-verification required"
+    exit 0
+  fi
   emit_block \
     "Ralph-loop-infinite gate ARMED: verifier_pass state present but signed pass record is invalid (${REASON_TEXT}). A fresh HMAC-signed verifier verdict is required to exit." \
     "verifier-pass-unsigned-or-invalid" \

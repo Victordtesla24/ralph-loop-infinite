@@ -196,7 +196,44 @@ def now_iso() -> str:
 
 
 def log_stage(stage: str, payload: dict[str, Any]) -> None:
-    """Append a structured stage log line. Never raises; never leaks secrets."""
+    """Append a structured stage log line. Never raises; never leaks secrets.
+
+    Fix 5: Also records current_stage to the state file so the stop hook
+    can read it and enforce the GCJ classification per stage.
+    """
+    _write_current_stage(stage)  # Fix 5: GCJ stage enforcement
+    try:
+        THINKING_LOG.parent.mkdir(parents=True, exist_ok=True)
+        scrubbed = _scrub_secrets(payload)
+        record = {"ts": now_iso(), "stage": stage, **scrubbed}
+        with THINKING_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, sort_keys=True) + "\n")
+    except Exception:
+        # Logging must never fail the loop.
+        pass
+
+
+def _write_current_stage(stage: str) -> None:
+    """Fix 5: Write current GCJ stage to state file for stop hook GCJ enforcement."""
+    try:
+        state_file = Path.home() / ".claude" / "state" / "ralph-loop-infinite.local"
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        lines = []
+        if state_file.exists():
+            lines = state_file.read_text(encoding="utf-8").splitlines()
+        out_lines = []
+        found = False
+        for line in lines:
+            if line.startswith("current_stage:"):
+                out_lines.append(f"current_stage: {stage}")
+                found = True
+            else:
+                out_lines.append(line)
+        if not found:
+            out_lines.append(f"current_stage: {stage}")
+        state_file.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+    except Exception:
+        pass  # Must never fail
     try:
         THINKING_LOG.parent.mkdir(parents=True, exist_ok=True)
         scrubbed = _scrub_secrets(payload)
@@ -503,9 +540,7 @@ REMEDIATION_TEMPLATE = (
     "- Do NOT rewrite the entire response\n"
     "- Preserve correct and useful parts\n"
     "- Improve clarity and depth only where needed\n"
-    
-    
-    
+    "- Avoid introducing new information unless required\n"
     "\n"
     "Return the improved version.\n"
 )
