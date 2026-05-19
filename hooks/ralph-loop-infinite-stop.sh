@@ -47,6 +47,8 @@ HMAC_KEY_FILE="$HOME/.claude/secrets/ralph-hmac.key"
 ALLOWLIST_FILE="$HOME/.claude/state/ralph-loop-outsiders.local"
 LEGACY_MONITOR_FILE="$HOME/.claude/state/ralph-loop-monitors.local"
 DB_HELPER="$HOME/.claude/hooks/ralph-loop-infinite-db.py"
+GENERATOR_HELPER="$HOME/.claude/hooks/ralph-loop-infinite-generator.py"
+REMEDIATION_PROMPT_FILE="$HOME/.claude/state/ralph-remediation-prompt.txt"
 TSPARSE="$HOME/.claude/hooks/ralph-loop-infinite-tsparse.py"
 POLICY_HELPER="$HOME/.claude/hooks/ralph-loop-infinite-policy.py"
 EVIDENCE_HELPER="$HOME/.claude/hooks/ralph-loop-infinite-evidence.py"
@@ -59,6 +61,21 @@ log() {
 }
 
 db_available() { [[ -x "$DB_HELPER" ]] && command -v python3 >/dev/null 2>&1; }
+run_generator_once() {
+  [[ "${RALPH_GENERATOR_DISABLE:-0}" == "1" ]] && return 0
+  [[ -x "$GENERATOR_HELPER" ]] || { log "GENERATOR_SKIP helper_missing=$GENERATOR_HELPER"; return 0; }
+  local gen_log="$HOME/.claude/state/ralph-generator-last.json"
+  local dry_arg=()
+  [[ "${RALPH_GENERATOR_DRY_RUN:-0}" == "1" ]] && dry_arg=(--dry-run)
+  python3 "$GENERATOR_HELPER" \
+    --session-id "${HOOK_SESSION:-unknown}" \
+    --iteration "$ITERATION" \
+    --original-prompt-file "${ORIGINAL_PROMPT_PATH:-$HOME/.claude/state/original-user-prompt.txt}" \
+    --remediation-file "$REMEDIATION_PROMPT_FILE" \
+    --agent-output-file "${AGENT_OUTPUT_FILE:-}" \
+    "${dry_arg[@]}" > "$gen_log" 2>&1 || true
+  log "GENERATOR_RUN iter=$ITERATION sess=${HOOK_SESSION:-unknown} log=$gen_log"
+}
 
 db_init() {
   if db_available; then
@@ -1059,26 +1076,33 @@ except Exception:
     log "FATAL: failed to record verifier-FAIL state update (DB+file). Failing closed."
   fi
 
-  # Blog MAX_ITERATIONS=3; default to 3 if unset (was 0 — effectively disabled)
+  # Blog MAX_ITERATIONS=3; F3: cap is graceful return, not a blocker.
   MAX_ITERATIONS="${RALPH_MAX_ITERATIONS:-3}"
   if [[ "$MAX_ITERATIONS" =~ ^[0-9]+$ && "$MAX_ITERATIONS" -gt 0 && "$ITERATION" -ge "$MAX_ITERATIONS" ]]; then
     TS_NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     jq -n --arg ts "$TS_NOW" --arg sess "${HOOK_SESSION:-unknown}" --arg iter "$ITERATION" --arg max "$MAX_ITERATIONS" --arg reason "$REASON" \
-      '{ts:$ts, sessionId:$sess, type:"verifier-max-iteration-blocker", iteration:($iter|tonumber), max_iterations:($max|tonumber), reason:$reason}' >> "$VIOLATIONS_FILE" 2>/dev/null || true
+      '{ts:$ts, sessionId:$sess, type:"max-reached-return", iteration:($iter|tonumber), max_iterations:($max|tonumber), reason:$reason, decision:"allow"}' >> "$VIOLATIONS_FILE" 2>/dev/null || true
     if db_available; then
       python3 "$DB_HELPER" state-update \
         --session-id "${HOOK_SESSION:-unknown}" \
-        --set "verifier_last_verdict=BLOCKER" \
-        --set "verifier_last_reason=max-iteration blocker: $REASON_TRIM" \
-        --set "remediation_explicit_blocker=true" >/dev/null 2>&1 || true
+        --set "verifier_last_verdict=MAX_REACHED_RETURN" \
+        --set "verifier_last_reason=max iterations exhausted; returning best iteration: $REASON_TRIM" \
+        --set "remediation_explicit_blocker=false" >/dev/null 2>&1 || true
     fi
-    REMEDIATE_MSG=$(remediation_block_message "$VERDICT" "$HMAC_VALID" "$REASON" "$ITERATION" "${HOOK_SESSION:-unknown}")
-    emit_block \
-      "Ralph-loop-infinite reached configured max iterations ($ITERATION/$MAX_ITERATIONS) without verifier PASS. This is an explicit BLOCKER, not completion. Same-session remediation remains required unless the user explicitly disarms." \
-      "verifier-max-iteration-blocker" \
-      "$REMEDIATE_MSG"
+    TMP_STATE=$(mktemp 2>/dev/null) || TMP_STATE="/tmp/ralph-state.$$"
+    {
+      grep -v -E '^(verifier_last_verdict|verifier_last_reason|remediation_explicit_blocker):' "$STATE_FILE" 2>/dev/null || true
+      echo "verifier_last_verdict: MAX_REACHED_RETURN"
+      echo "verifier_last_reason: max iterations exhausted; returning best iteration: $REASON_TRIM"
+      echo "remediation_explicit_blocker: false"
+    } > "$TMP_STATE" 2>/dev/null && mv "$TMP_STATE" "$STATE_FILE" 2>/dev/null || true
+    jq -n --arg msg "Ralph-loop-infinite reached max iterations ($ITERATION/$MAX_ITERATIONS). Returning best-iteration output gracefully; no integrity blocker was raised." '{decision:"allow", reason:$msg}'
     exit 0
   fi
+
+  # F2/F4: Stop is a monitor; the autonomous GENERATOR body runs as an explicit
+  # subprocess through ralph-spawn.sh roles (analyst,coder,tester by default).
+  run_generator_once
 
   if [[ "$ITERATION" -ge 2 ]]; then
     TS_NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

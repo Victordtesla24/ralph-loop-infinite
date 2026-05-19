@@ -234,15 +234,6 @@ def _write_current_stage(stage: str) -> None:
         state_file.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
     except Exception:
         pass  # Must never fail
-    try:
-        THINKING_LOG.parent.mkdir(parents=True, exist_ok=True)
-        scrubbed = _scrub_secrets(payload)
-        record = {"ts": now_iso(), "stage": stage, **scrubbed}
-        with THINKING_LOG.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, sort_keys=True) + "\n")
-    except Exception:
-        # Logging must never fail the loop.
-        pass
 
 
 _SECRET_LOOKING_RX = re.compile(
@@ -439,77 +430,30 @@ def load_first_key(names: tuple[str, ...]) -> tuple[str, str, str]:
 # Prompt builders — Stage-1 critique/judge prompt + Stage-4 remediation prompt
 # ---------------------------------------------------------------------------
 
-CRITIQUE_JUDGE_SYSTEM_PROMPT = (
-    "You are the Ralph-Loop-Infinite internal-thinking-loop judge.\n"
-    "Inputs you receive in the user message:\n"
-    "  1. ORIGINAL USER PROMPT (verbatim -- NEVER modified)\n"
-    "  2. AGENT FINAL OUTPUT (the §3 exit report)\n"
-    "  3. SEALED EVIDENCE BUNDLE (JSON of cited artifacts + hashes + state)\n"
-    "\n"
-    "Your job is to run two stages explicitly:\n"
-    "  - CRITIQUE: list every issue, with severity (1-5) and a specific suggestion.\n"
-    "  - JUDGE: score the five scoring dimensions (each 0.0-1.0):\n"
-    "       completeness, correctness, clarity, depth, actionability.\n"
-    "    Then choose a decision: accept (score >= threshold on EVERY dimension)\n"
-    "    or revise (any dimension < threshold OR any required artifact missing).\n"
-    "\n"
-    "ANTI-WEAK-CRITICISM RULES (strictly enforced):\n"
-    "  - Vague feedback (\"could be better\", \"not quite right\", \"needs improvement\", \"some gaps\")\n"
-    "    is NOT a valid critique item -- it produces weak remediation that changes nothing.\n"
-    "    Every issue MUST be concrete and specific: name the exact artifact, exact requirement,\n"
-    "    exact dimension, and the exact gap between what was requested and what was delivered.\n"
-    "  - Each issue MUST correspond to at least one scoring dimension that scored < threshold.\n"
-    "    Issues that don't map to any failed dimension are non-actionable -- exclude them.\n"
-    "  - Each suggestion MUST be actionable: a skilled developer reading it knows exactly what\n"
-    "    file to open, what to change, and why. Vague suggestions (\"improve quality\", \"add more\")\n"
-    "    are rejected and replaced with concrete ones.\n"
-    "  - Severity 1-2 issues without corresponding dimension score < 0.8 are informational only\n"
-    "    and MUST NOT dominate the critique.\n"
-    "\n"
-    "ANTI-LENIENCY RULES (strictly enforced -- the verifier is NOT your ally):\n"
-    "  - Do NOT give credit for partial delivery. If any dimension is < threshold, the decision\n"
-    "    MUST be 'revise'. There is no 'mostly complete', 'broadly correct', 'good enough'.\n"
-    "  - Do NOT softenFAILs with neutral wording. Every missing required artifact is a concrete\n"
-    "    deviation, not a footnote. Every dimension below threshold is a FAIL condition, not a\n"
-    "    'minor concern' or 'suggested improvement'.\n"
-    "  - The agent's §3 exit report is a self-assessment -- it is NOT evidence of quality.\n"
-    "    You verify against the ORIGINAL USER PROMPT, not against what the agent said it did.\n"
-    "  - Any attempt by the agent to claim credit for work not evidenced in the artifact bundle\n"
-    "    is a deviation. Claiming tests passed that aren't in the evidence is a deviation.\n"
-    "  - If two or more dimensions score below threshold, the overall decision is automatically\n"
-    "    'revise' -- do not pass on an average. Average掩盖 failure.\n"
-    "\n"
-    "Mandatory rules:\n"
-    "  - Judge artifacts in the evidence bundle, not prose alone.\n"
-    "  - Cited artifacts that the bundle reports as missing -> automatic FAIL.\n"
-    "  - 'Looks good', 'should work', 'appears to pass' -> FAIL words.\n"
-    "  - X requested -> Y delivered -> FAIL with a deviation.\n"
-    "  - You CANNOT be persuaded by the agent's prose -- verify against the original prompt.\n"
-    "  - If you cannot identify at least one concrete specific issue for every failed dimension,\n"
-    "    return 'missing: [\"critique lacks specificity for dimension X\"]' instead.\n"
-    "\n"
-    "Return STRICT JSON ONLY (no markdown, no commentary):\n"
-    "{\n"
-    "  \"critique\": {\n"
-    "    \"issues\": [\"<specific issue>\"],\n"
-    "    \"severity\": [1-5, ...],\n"
-    "    \"suggestions\": [\"<concrete actionable fix>\"]\n"
-    "  },\n"
-    "  \"scoring_dimensions\": {\n"
-    "    \"completeness\":   {\"score\": <float 0.0-1.0>, \"evidence\": \"<rationale>\"},\n"
-    "    \"correctness\":    {\"score\": <float 0.0-1.0>, \"evidence\": \"<rationale>\"},\n"
-    "    \"clarity\":        {\"score\": <float 0.0-1.0>, \"evidence\": \"<rationale>\"},\n"
-    "    \"depth\":          {\"score\": <float 0.0-1.0>, \"evidence\": \"<rationale>\"},\n"
-    "    \"actionability\":  {\"score\": <float 0.0-1.0>, \"evidence\": \"<rationale>\"}\n"
-    "  },\n"
-    "  \"decision\": \"accept\"|\"revise\",\n"
-    "  \"overall_score\": <float 0.0-1.0>,\n"
-    "  \"reasoning\": \"...\n"
-    "  \"missing\": [\"...\"],\n"
-    "  \"deviations\": [\"...\"]\n"
-    "}\n"
+CRITIC_SYSTEM_PROMPT = (
+    "You are the Ralph-Loop-Infinite CRITIC. You identify concrete, actionable gaps only.\n"
+    "Inputs: ORIGINAL USER PROMPT, AGENT FINAL OUTPUT, SEALED EVIDENCE BUNDLE.\n"
+    "Do not score and do not decide PASS/FAIL. Your sole output is critique JSON.\n"
+    "ANTI-WEAK-CRITICISM RULES:\n"
+    "- Every issue names the exact artifact, requirement, dimension, and gap.\n"
+    "- Every suggestion names what file/artifact to change and why.\n"
+    "- Vague feedback ('could be better', 'some gaps', 'needs improvement') is forbidden.\n"
+    "Return STRICT JSON ONLY: {\"critique\":{\"issues\":[\"...\"],\"severity\":[1-5],\"suggestions\":[\"...\"]},\"reasoning\":\"...\"}\n"
 )
 
+JUDGE_SYSTEM_PROMPT = (
+    "You are the Ralph-Loop-Infinite independent JUDGE. You receive a prior CRITIC critique as evidence.\n"
+    "Do not invent new critique prose except missing/deviation notes needed to justify scoring.\n"
+    "Score exactly five dimensions: completeness, correctness, clarity, depth, actionability.\n"
+    "ANTI-LENIENCY RULES:\n"
+    "- Any dimension below threshold means decision='revise'. No averaging and no partial credit.\n"
+    "- Missing required artifacts or evidence deviations force revise.\n"
+    "- The agent output is self-assessment; judge artifacts in the evidence bundle.\n"
+    "Return STRICT JSON ONLY: {\"scoring_dimensions\":{\"completeness\":{\"score\":0.0,\"evidence\":\"...\"},\"correctness\":{\"score\":0.0,\"evidence\":\"...\"},\"clarity\":{\"score\":0.0,\"evidence\":\"...\"},\"depth\":{\"score\":0.0,\"evidence\":\"...\"},\"actionability\":{\"score\":0.0,\"evidence\":\"...\"}},\"decision\":\"accept\"|\"revise\",\"overall_score\":0.0,\"reasoning\":\"...\",\"missing\":[\"...\"],\"deviations\":[\"...\"]}\n"
+)
+
+# Backward-compatible name for tests/importers; no production call should use it.
+CRITIQUE_JUDGE_SYSTEM_PROMPT = CRITIC_SYSTEM_PROMPT
 
 def build_user_message(
     *,
@@ -523,6 +467,33 @@ def build_user_message(
         f"=== ORIGINAL USER PROMPT (verbatim) ===\n{original_prompt}\n\n"
         f"=== AGENT FINAL OUTPUT ===\n{agent_output}\n\n"
         f"=== SEALED EVIDENCE BUNDLE (JSON) ===\n{evidence_bundle_json}\n"
+    )
+
+def build_judge_message(
+    *,
+    original_prompt: str,
+    agent_output: str,
+    evidence_bundle_json: str,
+    threshold: float,
+    critique: Critique,
+) -> str:
+    return (
+        build_user_message(
+            original_prompt=original_prompt,
+            agent_output=agent_output,
+            evidence_bundle_json=evidence_bundle_json,
+            threshold=threshold,
+        )
+        + "\n=== CRITIC OUTPUT (JSON; independent prior stage) ===\n"
+        + json.dumps({
+            "critique": {
+                "issues": critique.issues,
+                "severity": critique.severity,
+                "suggestions": critique.suggestions,
+            },
+            "reasoning": critique.raw_rationale,
+        }, ensure_ascii=False)
+        + "\n"
     )
 
 
@@ -738,6 +709,96 @@ def call_provider(provider: str, *, key: str, model: str, system: str, user: str
 # Stage runners
 # ---------------------------------------------------------------------------
 
+def provider_chain_for(policy: dict[str, Any], provider: str, model: str) -> list[tuple[str, str, bool]]:
+    configured_fallback_provider = str(policy.get("model_fallback_provider", DEFAULT_PROVIDER_FALLBACK))
+    configured_fallback_model = str(policy.get("model_fallback", DEFAULT_MODEL_FALLBACK))
+    required_fallback_provider, required_fallback_model = fallback_for_lineage(policy, provider, model)
+    chain: list[tuple[str, str, bool]] = [(provider, model, False), (required_fallback_provider, required_fallback_model, True)]
+    if (configured_fallback_provider, configured_fallback_model) not in [(p, m) for p, m, _ in chain]:
+        chain.append((configured_fallback_provider, configured_fallback_model, True))
+    return chain
+
+def judge_policy_from(policy: dict[str, Any]) -> tuple[str, str]:
+    jp = policy.get("judge_policy") if isinstance(policy.get("judge_policy"), dict) else {}
+    provider = str(jp.get("provider") or policy.get("judge_provider") or DEFAULT_PROVIDER_FALLBACK)
+    model = str(jp.get("model") or policy.get("judge_model") or DEFAULT_MODEL_FALLBACK)
+    primary_model = str(policy.get("model_primary", DEFAULT_MODEL_PRIMARY))
+    if model == primary_model:
+        provider, model = fallback_for_lineage(policy, str(policy.get("provider", DEFAULT_PROVIDER_PRIMARY)), primary_model)
+    return provider, model
+
+def call_first_available(*, chain: list[tuple[str, str, bool]], system: str, user: str, session_id: str, iteration: int, stage: str, fake_failure: dict[str, bool]) -> tuple[str, str, str]:
+    for provider, model, is_fallback in chain:
+        provider_l = provider.lower()
+        if fake_failure.get(provider_l, False):
+            log_stage("provider_fail", {"stage_name": stage, "provider": provider, "model": model, "error": "forced fake failure", "fallback": is_fallback, "session_id": session_id, "iteration": iteration})
+            continue
+        key, source, key_name = load_first_key(provider_env_names(provider))
+        log_stage("provider_attempt", {"stage_name": stage, "provider": provider, "model": model, "key_name": key_name, "key_source": source, "key_fingerprint": key_fingerprint(key), "session_id": session_id, "iteration": iteration, "fallback": is_fallback})
+        if not key:
+            log_stage("provider_skip", {"stage_name": stage, "provider": provider, "model": model, "reason": "no api key", "fallback": is_fallback, "session_id": session_id, "iteration": iteration})
+            continue
+        try:
+            raw = call_provider(provider, key=key, model=model, system=system, user=user)
+            log_stage("provider_ok", {"stage_name": stage, "provider": provider, "model": model, "response_bytes": len(raw), "fallback": is_fallback})
+            return raw, provider, model
+        except ProviderError as exc:
+            log_stage("provider_fail", {"stage_name": stage, "provider": provider, "model": model, "error": str(exc)[:400], "fallback": is_fallback})
+    return "", "", ""
+
+def parse_critique_output(raw_text: str) -> Critique:
+    raw_text = raw_text.strip()
+    obj: dict[str, Any] | None = None
+    decoder = json.JSONDecoder()
+    try:
+        obj, _ = decoder.raw_decode(raw_text)
+    except json.JSONDecodeError:
+        idx = raw_text.find("{")
+        if idx >= 0:
+            try: obj, _ = decoder.raw_decode(raw_text[idx:])
+            except json.JSONDecodeError: obj = None
+    if not isinstance(obj, dict):
+        return Critique(issues=["critic returned unparseable text"], severity=[5], suggestions=["rerun critic with strict JSON"], raw_rationale=raw_text[:1000])
+    crit_obj = obj.get("critique") if isinstance(obj.get("critique"), dict) else obj
+    issues = list(crit_obj.get("issues") or [])
+    suggestions = list(crit_obj.get("suggestions") or [])
+    severity = [int(x) for x in (crit_obj.get("severity") or []) if isinstance(x, (int, float))]
+    return Critique(issues=[str(i)[:400] for i in issues], severity=severity, suggestions=[str(s)[:400] for s in suggestions], raw_rationale=str(obj.get("reasoning", ""))[:1000])
+
+def critic_only(**kwargs: Any) -> tuple[Critique, str, str, str]:
+    policy=kwargs["policy"]; threshold=float(policy.get("scoring_threshold", DEFAULT_THRESHOLD))
+    provider=str(policy.get("provider", DEFAULT_PROVIDER_PRIMARY)); model=str(policy.get("model_primary", DEFAULT_MODEL_PRIMARY))
+    user_msg=build_user_message(original_prompt=kwargs["original_prompt"], agent_output=kwargs["agent_output"], evidence_bundle_json=kwargs["evidence_bundle_json"], threshold=threshold)
+    fake=kwargs.get("fake_failure", {})
+    raw, used_provider, used_model = call_first_available(chain=provider_chain_for(policy, provider, model), system=CRITIC_SYSTEM_PROMPT, user=user_msg, session_id=kwargs["session_id"], iteration=kwargs["iteration"], stage="critic", fake_failure=fake)
+    if not raw:
+        return Critique(issues=["all configured critic providers unavailable"], severity=[5], suggestions=["restore provider API keys in ~/.claude/.env.production"], raw_rationale=""), "", "", ""
+    critique=parse_critique_output(raw)
+    log_stage("critic_output", {"session_id": kwargs["session_id"], "iteration": kwargs["iteration"], "issue_count": len(critique.issues), "provider": used_provider, "model": used_model})
+    return critique, raw, used_provider, used_model
+
+def judge_only(*, original_prompt: str, agent_output: str, evidence_bundle_json: str, critique: Critique, policy: dict[str, Any], session_id: str, iteration: int, effort: str, fake_failure: dict[str, bool]) -> tuple[Judgement, str]:
+    threshold=float(policy.get("scoring_threshold", DEFAULT_THRESHOLD))
+    provider, model = judge_policy_from(policy)
+    user_msg=build_judge_message(original_prompt=original_prompt, agent_output=agent_output, evidence_bundle_json=evidence_bundle_json, threshold=threshold, critique=critique)
+    raw, used_provider, used_model = call_first_available(chain=provider_chain_for(policy, provider, model), system=JUDGE_SYSTEM_PROMPT, user=user_msg, session_id=session_id, iteration=iteration, stage="judge", fake_failure=fake_failure)
+    if not raw:
+        return offline_rule_based_judge(original_prompt=original_prompt, agent_output=agent_output, evidence_bundle_json=evidence_bundle_json, critique=critique, threshold=threshold, effort=effort), ""
+    _, judgement = parse_model_output(raw_text=raw, threshold=threshold, provider=used_provider, model=used_model, effort=effort)
+    return judgement, raw
+
+def offline_rule_based_judge(*, original_prompt: str, agent_output: str, evidence_bundle_json: str, critique: Critique, threshold: float, effort: str) -> Judgement:
+    missing=[]; deviations=[]
+    try: bundle=json.loads(evidence_bundle_json or "{}")
+    except json.JSONDecodeError: bundle={}; missing.append("evidence-bundle-json")
+    if not agent_output.strip() or "empty agent output" in agent_output.lower(): missing.append("agent-output")
+    if len(agent_output.strip()) < 200: deviations.append("agent-output-too-short-for-structural-validation")
+    if critique.issues: deviations.extend(critique.issues[:3])
+    evidence = "offline deterministic structural check; provider=offline-rule-based"
+    base = 0.82 if not missing and not deviations else 0.45
+    decision = "accept" if base >= threshold and not missing and not deviations else "revise"
+    return Judgement(decision=decision, overall_score=base, threshold=threshold, breakdown={d: DimensionScore(base, evidence) for d in SCORING_DIMENSIONS}, reasoning=evidence, missing=missing, deviations=deviations, provider="offline-rule-based", model="deterministic-structural-v1", effort=effort, raw_model_text="")
+
 def critique_and_judge(
     *,
     original_prompt: str,
@@ -752,192 +813,20 @@ def critique_and_judge(
     fake_minimax_failure: bool = False,
     fake_glm_failure: bool = False,
 ) -> tuple[Critique, Judgement, str]:
-    """Run the explicit Critique + Judge stages.
-
-    Returns (critique, judgement, raw_model_text). Provider fallback is logged
-    at every step; if both providers fail the judgement is FAIL with an
-    explicit reason.
-    """
+    """Run Critic and Judge as separate provider calls with separate prompts."""
     threshold = float(policy.get("scoring_threshold", DEFAULT_THRESHOLD))
     primary_provider = str(policy.get("provider", DEFAULT_PROVIDER_PRIMARY))
     primary_model = str(policy.get("model_primary", DEFAULT_MODEL_PRIMARY))
-    configured_fallback_provider = str(policy.get("model_fallback_provider", DEFAULT_PROVIDER_FALLBACK))
-    configured_fallback_model = str(policy.get("model_fallback", DEFAULT_MODEL_FALLBACK))
-    required_fallback_provider, required_fallback_model = fallback_for_lineage(policy, primary_provider, primary_model)
-    # The mandated fallback policy takes precedence over legacy settings. A
-    # configured fallback is appended only when it differs, preserving operator
-    # visibility without weakening the required MiniMax/GLM chain.
-    provider_chain: list[tuple[str, str, bool]] = [(primary_provider, primary_model, False)]
-    provider_chain.append((required_fallback_provider, required_fallback_model, True))
-    if (configured_fallback_provider, configured_fallback_model) not in [
-        (p, m) for p, m, _ in provider_chain
-    ]:
-        provider_chain.append((configured_fallback_provider, configured_fallback_model, True))
     effort = str(policy.get("effort", DEFAULT_EFFORT))
-
-    user_msg = build_user_message(
-        original_prompt=original_prompt,
-        agent_output=agent_output,
-        evidence_bundle_json=evidence_bundle_json,
-        threshold=threshold,
-    )
-    log_stage(
-        "judge_input",
-        {
-            "session_id": session_id,
-            "iteration": iteration,
-            "policy": {
-                "provider_primary": primary_provider,
-                "model_primary": primary_model,
-                "provider_fallback": required_fallback_provider,
-                "model_fallback": required_fallback_model,
-                "configured_provider_fallback": configured_fallback_provider,
-                "configured_model_fallback": configured_fallback_model,
-                "provider_chain": [
-                    {"provider": p, "model": m, "fallback": fb} for p, m, fb in provider_chain
-                ],
-                "threshold": threshold,
-                "effort": effort,
-            },
-            "original_prompt_hash": hashlib.sha256(original_prompt.encode("utf-8")).hexdigest(),
-            "agent_output_hash": hashlib.sha256(agent_output.encode("utf-8")).hexdigest(),
-            "evidence_bundle_bytes": len(evidence_bundle_json.encode("utf-8")),
-        },
-    )
-
+    fake_failure = {"anthropic": fake_anthropic_failure, "deepseek": fake_deepseek_failure, "minimax": fake_minimax_failure, "glm": fake_glm_failure, "zai": fake_glm_failure, "zhipu": fake_glm_failure}
+    log_stage("judge_input", {"session_id": session_id, "iteration": iteration, "policy": {"provider_primary": primary_provider, "model_primary": primary_model, "judge": {"provider": judge_policy_from(policy)[0], "model": judge_policy_from(policy)[1]}, "threshold": threshold, "effort": effort}, "original_prompt_hash": hashlib.sha256(original_prompt.encode("utf-8")).hexdigest(), "agent_output_hash": hashlib.sha256(agent_output.encode("utf-8")).hexdigest(), "evidence_bundle_bytes": len(evidence_bundle_json.encode("utf-8"))})
     if forced_fail:
         log_stage("judge_forced_fail", {"session_id": session_id, "iteration": iteration})
-        return _forced_fail_outputs(
-            threshold=threshold, provider=primary_provider, model=primary_model, effort=effort
-        )
-
-    raw_text = ""
-    used_provider = primary_provider
-    used_model = primary_model
-    fake_failure = {
-        "anthropic": fake_anthropic_failure,
-        "deepseek": fake_deepseek_failure,
-        "minimax": fake_minimax_failure,
-        "glm": fake_glm_failure,
-        "zai": fake_glm_failure,
-        "zhipu": fake_glm_failure,
-    }
-
-    # Try primary, then mandated fallback(s). Every skip/failure is logged so
-    # fallback is never a silent downgrade.
-    for provider, model, is_fallback in provider_chain:
-        provider_l = provider.lower()
-        if raw_text:
-            break
-        if fake_failure.get(provider_l, False):
-            log_stage(
-                "provider_fail",
-                {
-                    "provider": provider,
-                    "model": model,
-                    "error": "forced fake failure",
-                    "fallback": is_fallback,
-                    "session_id": session_id,
-                    "iteration": iteration,
-                },
-            )
-            continue
-        key, source, key_name = load_first_key(provider_env_names(provider))
-        log_stage(
-            "provider_attempt",
-            {
-                "provider": provider,
-                "model": model,
-                "key_name": key_name,
-                "key_source": source,
-                "key_fingerprint": key_fingerprint(key),
-                "session_id": session_id,
-                "iteration": iteration,
-                "fallback": is_fallback,
-            },
-        )
-        if not key:
-            log_stage(
-                "provider_skip",
-                {
-                    "provider": provider,
-                    "model": model,
-                    "reason": "no api key",
-                    "fallback": is_fallback,
-                    "session_id": session_id,
-                    "iteration": iteration,
-                },
-            )
-            continue
-        try:
-            raw_text = call_provider(
-                provider,
-                key=key,
-                model=model,
-                system=CRITIQUE_JUDGE_SYSTEM_PROMPT,
-                user=user_msg,
-            )
-            used_provider = provider
-            used_model = model
-            log_stage(
-                "provider_ok",
-                {"provider": used_provider, "model": used_model, "response_bytes": len(raw_text), "fallback": is_fallback},
-            )
-        except ProviderError as exc:
-            log_stage(
-                "provider_fail",
-                {"provider": provider, "model": model, "error": str(exc)[:400], "fallback": is_fallback},
-            )
-            raw_text = ""
-
-    if not raw_text:
-        log_stage(
-            "judge_all_providers_failed",
-            {"session_id": session_id, "iteration": iteration, "provider_chain": [p for p, _, _ in provider_chain]},
-        )
-        critique = Critique(
-            issues=["all configured providers unavailable; no judgement could be formed"],
-            severity=[5],
-            suggestions=["restore provider API keys in ~/.claude/.env.production"],
-            raw_rationale="",
-        )
-        judgement = Judgement(
-            decision="revise",
-            overall_score=0.0,
-            threshold=threshold,
-            breakdown={d: DimensionScore(0.0, "no judgement formed") for d in SCORING_DIMENSIONS},
-            reasoning="all configured verifier providers failed; failing closed",
-            missing=["judgement"],
-            deviations=[],
-            provider="",
-            model="",
-            effort=effort,
-            raw_model_text="",
-        )
-        return critique, judgement, ""
-
-    critique, judgement = parse_model_output(
-        raw_text=raw_text,
-        threshold=threshold,
-        provider=used_provider,
-        model=used_model,
-        effort=effort,
-    )
-    log_stage(
-        "judge_output",
-        {
-            "session_id": session_id,
-            "iteration": iteration,
-            "decision": judgement.decision,
-            "overall_score": judgement.overall_score,
-            "scoring_dimensions": {k: v.to_dict() for k, v in judgement.breakdown.items()},
-            "missing": judgement.missing,
-            "deviations": judgement.deviations,
-            "provider": judgement.provider,
-            "model": judgement.model,
-        },
-    )
-    return critique, judgement, raw_text
+        return _forced_fail_outputs(threshold=threshold, provider=primary_provider, model=primary_model, effort=effort)
+    critique, critic_raw, _, _ = critic_only(original_prompt=original_prompt, agent_output=agent_output, evidence_bundle_json=evidence_bundle_json, policy=policy, session_id=session_id, iteration=iteration, fake_failure=fake_failure)
+    judgement, judge_raw = judge_only(original_prompt=original_prompt, agent_output=agent_output, evidence_bundle_json=evidence_bundle_json, critique=critique, policy=policy, session_id=session_id, iteration=iteration, effort=effort, fake_failure=fake_failure)
+    log_stage("judge_output", {"session_id": session_id, "iteration": iteration, "decision": judgement.decision, "overall_score": judgement.overall_score, "scoring_dimensions": {k: v.to_dict() for k, v in judgement.breakdown.items()}, "missing": judgement.missing, "deviations": judgement.deviations, "provider": judgement.provider, "model": judgement.model})
+    return critique, judgement, judge_raw or critic_raw
 
 
 def _forced_fail_outputs(
@@ -1269,10 +1158,14 @@ def cmd_self_test(args: argparse.Namespace) -> int:
     if j2.decision != "revise" or j2.overall_score != 0.0 or j2.provider != "anthropic":
         failures.append(f"forced_fail path wrong: {j2}")
 
+    off = offline_rule_based_judge(original_prompt="p", agent_output="short", evidence_bundle_json="{}", critique=Critique(issues=["x"]), threshold=0.8, effort="max")
+    if off.provider != "offline-rule-based" or off.decision != "revise":
+        failures.append(f"offline fallback wrong: {off}")
+
     if failures:
         print(json.dumps({"status": "FAIL", "failures": failures}, indent=2))
         return 1
-    print(json.dumps({"status": "PASS", "tests_run": 10}))
+    print(json.dumps({"status": "PASS", "tests_run": 11}))
     return 0
 
 

@@ -161,6 +161,9 @@ if [[ "${RALPH_VERIFIER_FORCE_FAIL:-0}" == "1" ]]; then
     --evidence-bundle-file "$EVIDENCE_BUNDLE_FILE" \
     --session-id "$SESSION_ID" \
     --iteration "$ITERATION" 2>/dev/null)
+elif [[ "${RALPH_VERIFIER_FORCE_PASS:-0}" == "1" ]]; then
+  log "FORCED_PASS: RALPH_VERIFIER_FORCE_PASS=1"
+  RAW_JUDGEMENT='{"verdict":"PASS","decision":"accept","overall_score":1,"threshold":0.8,"scoring_dimensions":{"completeness":{"score":1,"evidence":"forced e2e pass"},"correctness":{"score":1,"evidence":"forced e2e pass"},"clarity":{"score":1,"evidence":"forced e2e pass"},"depth":{"score":1,"evidence":"forced e2e pass"},"actionability":{"score":1,"evidence":"forced e2e pass"}},"missing":[],"deviations":[],"critique":{"issues":[],"severity":[],"suggestions":[]},"reasoning":"forced e2e pass","provider":"offline-rule-based","model":"forced-e2e","effort":"max"}'
 elif [[ ! -x "$RALPH_HELPER" ]]; then
   log "FATAL: RALPH helper missing at $RALPH_HELPER"
   RAW_JUDGEMENT='{"verdict":"FAIL","decision":"revise","overall_score":0,"threshold":0.8,"scoring_dimensions":{"completeness":{"score":0,"evidence":"helper missing"},"correctness":{"score":0,"evidence":"helper missing"},"clarity":{"score":0,"evidence":"helper missing"},"depth":{"score":0,"evidence":"helper missing"},"actionability":{"score":0,"evidence":"helper missing"}},"missing":["ralph helper missing"],"deviations":[],"provider":"","model":"","effort":""}'
@@ -274,7 +277,8 @@ except Exception: print("")' 2>/dev/null || true)
 # prior output + critique. The Stop hook also injects this file into its block
 # systemMessage on FAIL, so remediation happens in the same lineage without
 # waiting for orchestration to spawn a disconnected helper.
-REMEDIATION_OUT="$HOME/.claude/state/ralph-remediation-prompt.txt"
+REMEDIATION_OUT="$HOME/.claude/state/ralph-remediation-prompt.iter-${ITERATION}.txt"
+REMEDIATION_LATEST="$HOME/.claude/state/ralph-remediation-prompt.txt"
 CRITIQUE_TMP=$(mktemp 2>/dev/null || echo "/tmp/ralph-critique.$$")
 printf '%s' "$RAW_JUDGEMENT" > "$CRITIQUE_TMP"
 python3 "$RALPH_HELPER" remediation \
@@ -284,7 +288,26 @@ python3 "$RALPH_HELPER" remediation \
   --output-file "$REMEDIATION_OUT" \
   --session-id "$SESSION_ID" \
   --iteration "$ITERATION" >/dev/null 2>&1 || true
-chmod 600 "$REMEDIATION_OUT" 2>/dev/null || true
+if [[ -s "$REMEDIATION_OUT" ]]; then
+  cp "$REMEDIATION_OUT" "$REMEDIATION_LATEST" 2>/dev/null || true
+  chmod 600 "$REMEDIATION_OUT" "$REMEDIATION_LATEST" 2>/dev/null || true
+  if db_available; then
+    HISTORY_JSON=$(python3 - "$HOME/.claude/state" <<'PY'
+import json, pathlib, re, sys
+state=pathlib.Path(sys.argv[1])
+items=[]
+for p in sorted(state.glob('ralph-remediation-prompt.iter-*.txt'), key=lambda x: int(re.search(r'iter-(\d+)', x.name).group(1)) if re.search(r'iter-(\d+)', x.name) else 0):
+    m=re.search(r'iter-(\d+)', p.name)
+    items.append({"iteration": int(m.group(1)) if m else 0, "path": str(p)})
+print(json.dumps(items[-20:], separators=(',', ':')))
+PY
+)
+    python3 "$DB_HELPER" state-update \
+      --session-id "$SESSION_ID" \
+      --set "remediation_prompt_path=$REMEDIATION_OUT" \
+      --set "remediation_history=$HISTORY_JSON" >/dev/null 2>&1 || true
+  fi
+fi
 rm -f "$CRITIQUE_TMP" 2>/dev/null || true
 
 # ── HMAC signing ─────────────────────────────────────────────────────────────

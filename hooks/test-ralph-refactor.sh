@@ -18,8 +18,16 @@
 
 set -uo pipefail
 
-STAGED_DIR="${STAGED_DIR:-/Users/vic/.claude/hooks}"
+ALLOW_LIVE=0
+for arg in "$@"; do
+  [[ "$arg" == "--allow-live" ]] && ALLOW_LIVE=1
+done
+STAGED_DIR="${STAGED_DIR:-/tmp/ralph-refactor/hooks}"
 LIVE_DIR="${LIVE_DIR:-/Users/vic/.claude/hooks}"
+if [[ "$STAGED_DIR" == "$LIVE_DIR" && "$ALLOW_LIVE" -ne 1 ]]; then
+  echo "ERROR: STAGED_DIR resolves to LIVE_DIR ($LIVE_DIR). Refusing to mutate/audit live hooks without --allow-live." >&2
+  exit 2
+fi
 SBX_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/rli-refactor-test.XXXXXX")
 trap 'rm -rf "$SBX_ROOT" 2>/dev/null || true' EXIT INT TERM
 

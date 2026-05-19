@@ -63,6 +63,7 @@ DEFAULT_POLICY = {
     "model_allowlist": ["claude-opus-4-7", "deepseek-v4-pro", "minimax-m2.7", "glm-4.5"],
     "model_fallback_provider": "minimax",
     "model_fallback": "minimax-m2.7",
+    "judge_policy": {"provider": "minimax", "model": "minimax-m2.7"},
     "fallback_policy": {
         "opus_4_7_and_deepseek": {"provider": "minimax", "model": "minimax-m2.7"},
         "other_agents": {"provider": "glm", "model": "glm-4.5"},
@@ -121,6 +122,10 @@ def load_policy() -> dict:
     # Ensure every configured fallback is always allowlisted so a legitimate
     # fallback verdict can be cached without later policy-violation rejection.
     allowlist = list(policy.get("model_allowlist", []) or [])
+    judge_policy = policy.get("judge_policy") if isinstance(policy.get("judge_policy"), dict) else {}
+    jm = judge_policy.get("model")
+    if isinstance(jm, str) and jm and jm not in allowlist:
+        allowlist.append(jm)
     fb = policy.get("model_fallback")
     if isinstance(fb, str) and fb and fb not in allowlist:
         allowlist.append(fb)
@@ -158,6 +163,9 @@ def allow(provider: str, model: str) -> tuple[bool, str]:
     expected_provider = policy.get("provider", "anthropic")
     fallback_provider = policy.get("model_fallback_provider", "")
     fallback_providers = {str(fallback_provider)} if fallback_provider else set()
+    judge_policy = policy.get("judge_policy") if isinstance(policy.get("judge_policy"), dict) else {}
+    if judge_policy.get("provider"):
+        fallback_providers.add(str(judge_policy.get("provider")))
     fallback_policy = policy.get("fallback_policy") or {}
     if isinstance(fallback_policy, dict):
         for cell in fallback_policy.values():
@@ -190,6 +198,8 @@ def main() -> int:
     sub.add_parser("effort", help="print primary effort level")
     sub.add_parser("fallback-provider", help="print fallback provider")
     sub.add_parser("fallback-model", help="print fallback model")
+    sub.add_parser("judge-provider", help="print judge provider")
+    sub.add_parser("judge-model", help="print judge model")
     fb_for = sub.add_parser("fallback-for", help="print required fallback for PROVIDER MODEL as JSON")
     fb_for.add_argument("provider")
     fb_for.add_argument("model")
@@ -221,6 +231,14 @@ def main() -> int:
         return 0
     if args.cmd == "fallback-model":
         print(policy.get("model_fallback", ""))
+        return 0
+    if args.cmd == "judge-provider":
+        jp = policy.get("judge_policy") if isinstance(policy.get("judge_policy"), dict) else {}
+        print(jp.get("provider", policy.get("model_fallback_provider", "")))
+        return 0
+    if args.cmd == "judge-model":
+        jp = policy.get("judge_policy") if isinstance(policy.get("judge_policy"), dict) else {}
+        print(jp.get("model", policy.get("model_fallback", "")))
         return 0
     if args.cmd == "fallback-for":
         provider, model = fallback_for(args.provider, args.model)

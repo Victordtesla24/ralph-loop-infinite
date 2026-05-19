@@ -128,9 +128,10 @@ GENERATE → CRITIQUE → JUDGE → REMEDIATE → (repeat until JUDGE PASS)
 
 ```
 HMAC-SIGNED PASS              MAX_ITERATIONS (default: 3)      CONVERGENCE
-all 5 dims ≥ 0.80            → hard BLOCKER, user must          score ≤ prev
-+ all artifacts present      disarm or re-arm                  → escalation,
-                                                                 NOT exit
+all 5 dims ≥ 0.80            → best-iteration output,          score ≤ prev
++ all artifacts present      verifier_last_verdict=            → targeted
+                              MAX_REACHED_RETURN, allow          escalation,
+                                                                 NOT blocker
 ```
 
 ### Sub-Agent Hierarchy
@@ -146,6 +147,7 @@ Orchestrator (GENERATOR) ──▶ Worker/Coder (GENERATOR) ──▶ Evidence
 ```
 
 Workers do NOT self-assess. Orchestrator routes to JUDGE. Only JUDGE can stop the loop.
+On verifier FAIL, `ralph-loop-infinite-stop.sh` invokes `ralph-loop-infinite-generator.py`, which dispatches explicit `analyst,coder,tester` roles through `scripts/ralph-spawn.sh` (configurable via `RALPH_GENERATOR_ROLES`). The Stop hook monitors and records state; the generator subprocess is the autonomous body.
 
 ---
 
@@ -162,7 +164,8 @@ Workers do NOT self-assess. Orchestrator routes to JUDGE. Only JUDGE can stop th
 │                  ↓  FAIL                                     │
 │   [MiniMax / MiniMax-M2.7]               ← All other agents │
 │                  ↓  ALL FAIL                                 │
-│   → log "all providers failed" → fail-closed               │
+│   [offline-rule-based / deterministic]    ← structural       │
+│                  checks, clearly labelled provider           │
 │                                                             │
 │   Every skip and failure is logged.                         │
 │   Fallback is NEVER silent.                                 │

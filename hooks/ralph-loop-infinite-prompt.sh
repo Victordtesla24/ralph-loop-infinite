@@ -33,6 +33,7 @@ ALLOWLIST_FILE="$HOME/.claude/state/ralph-loop-outsiders.local"
 LEGACY_MONITOR_FILE="$HOME/.claude/state/ralph-loop-monitors.local"
 DB_HELPER="$HOME/.claude/hooks/ralph-loop-infinite-db.py"
 REMEDIATION_PROMPT_FILE="$HOME/.claude/state/ralph-remediation-prompt.txt"
+REMEDIATION_PROMPT_GLOB="$HOME/.claude/state/ralph-remediation-prompt.iter-*.txt"
 
 mkdir -p "$(dirname "$LOG_FILE")"
 
@@ -188,7 +189,7 @@ WRITE_FRESH_STATE() {
   : > "$LEGACY_MONITOR_FILE" 2>/dev/null || true
   chmod 600 "$LEGACY_MONITOR_FILE" 2>/dev/null || true
   # Re-arm clears any stale remediation prompt from a prior loop.
-  rm -f "$REMEDIATION_PROMPT_FILE" 2>/dev/null || true
+  rm -f "$REMEDIATION_PROMPT_FILE" $REMEDIATION_PROMPT_GLOB 2>/dev/null || true
 }
 
 REARM_RESET_SAME_SESSION() {
@@ -208,7 +209,7 @@ REARM_RESET_SAME_SESSION() {
     mv "$target" "$STATE_FILE" 2>/dev/null || true
   fi
   db_event "$SESSION_ID" "explicit-rearm-reset" '{}'
-  rm -f "$REMEDIATION_PROMPT_FILE" 2>/dev/null || true
+  rm -f "$REMEDIATION_PROMPT_FILE" $REMEDIATION_PROMPT_GLOB 2>/dev/null || true
 }
 
 if [[ ! -f "$STATE_FILE" ]]; then
@@ -260,7 +261,7 @@ if echo "$PROMPT_TEXT" | grep -E -i -q "$DISARM_RX"; then
     rm -f "$STATE_FILE" 2>/dev/null || true
     rm -f "$ALLOWLIST_FILE" 2>/dev/null || true
     rm -f "$LEGACY_MONITOR_FILE" 2>/dev/null || true
-    rm -f "$REMEDIATION_PROMPT_FILE" 2>/dev/null || true
+    rm -f "$REMEDIATION_PROMPT_FILE" $REMEDIATION_PROMPT_GLOB 2>/dev/null || true
   fi
 fi
 
@@ -318,13 +319,30 @@ if [[ -f "$STATE_FILE" ]]; then
   if [[ "$CURRENT_VERIFIER_PASS" == "true" ]]; then
     GATE_STATE_BLOCK=$'\n\n=== GATE STATE ===\nverifier_pass: true (signed PASS valid). The current loop iteration is closed. Proceed normally; new explicit invocation will re-arm a fresh cycle.'
   elif [[ "$CURRENT_LAST_VERDICT" == "FAIL" || "$CURRENT_LAST_VERDICT" == "PRECHECK_FAIL" ]]; then
-    REMEDIATION_BODY=""
-    if [[ -f "$REMEDIATION_PROMPT_FILE" && -s "$REMEDIATION_PROMPT_FILE" ]]; then
-      REMEDIATION_BODY=$(cat "$REMEDIATION_PROMPT_FILE" 2>/dev/null)
-    fi
-    if [[ -z "$REMEDIATION_BODY" ]]; then
-      REMEDIATION_BODY="$REMEDIATION_TEMPLATE_HEADER"
-    fi
+    REMEDIATION_BODY=$(python3 - "$HOME/.claude/state" "$REMEDIATION_TEMPLATE_HEADER" <<'PY'
+import pathlib, re, sys
+state = pathlib.Path(sys.argv[1])
+fallback = sys.argv[2]
+files = []
+for p in state.glob('ralph-remediation-prompt.iter-*.txt'):
+    m = re.search(r'iter-(\d+)', p.name)
+    files.append((int(m.group(1)) if m else 0, p))
+parts = []
+for it, p in sorted(files)[-2:]:
+    try:
+        parts.append(f"=== REMEDIATION HISTORY iteration {it} ===\n" + p.read_text(encoding='utf-8', errors='replace'))
+    except OSError:
+        pass
+if not parts:
+    latest = state / 'ralph-remediation-prompt.txt'
+    if latest.exists():
+        try:
+            parts.append(latest.read_text(encoding='utf-8', errors='replace'))
+        except OSError:
+            pass
+print('\n\n'.join(parts) if parts else fallback)
+PY
+)
     GATE_STATE_BLOCK=$"\n\n=== GATE STATE ===\nactive: true · session_id: $CURRENT_SESSION · verifier_attempts: $CURRENT_ATTEMPTS · last_verdict: $CURRENT_LAST_VERDICT · remediation_target_session_id: ${REMEDIATION_TARGET:-$CURRENT_SESSION}\nLast verifier reason: $CURRENT_LAST_REASON\n\n=== RALPH STAGE 4 / REMEDIATE (anchored to prior output + critique; same implementation session required) ===\n$REMEDIATION_BODY\n\nWhen you have applied the fixes above, produce a NEW §3 exit report with NEW evidence (cited artifacts whose bytes corroborate every numeric claim). End the turn — the Stop hook will call the verifier again. DO NOT ask the user. DO NOT spawn a disconnected implementation agent unless remediation_explicit_blocker is true in gate state."
   else
     GATE_STATE_BLOCK=$"\n\n=== GATE STATE ===\nactive: true · session_id: $CURRENT_SESSION · no verifier call yet this cycle, attempts=$CURRENT_ATTEMPTS.\nWhen work that triggers §1 is complete, produce the §3 exit report and end the turn. The Stop hook calls the verifier; if PASS the loop exits, if FAIL the loop iterates with a targeted remediation prompt anchored to the critique."
