@@ -498,16 +498,16 @@ REMEDIATION_TEMPLATE = (
     "\n"
     "Suggested Fixes:\n{suggestions}\n"
     "\n"
-    "Instructions — treat this like an EDITOR WITH A RED PEN, NOT a writer:\n"
+    "Instructions:\n"
     "- Fix each issue explicitly\n"
     "- Do NOT rewrite the entire response\n"
-    "- Preserve correct and useful parts verbatim -- do not rephrase them\n"
-    "- Improve depth where needed (not everywhere)\n"
-    "- Avoid stylistic rewrites unless the critique specifically calls for style\n"
-    "- Do NOT introduce new information that was not in the original output\n"
-    "- Address each identified issue and nothing else\n"
+    "- Preserve correct and useful parts\n"
+    "- Improve clarity and depth only where needed\n"
+    
+    
+    
     "\n"
-    "Return the improved version. Preserve what is already correct.\n"
+    "Return the improved version.\n"
 )
 
 
