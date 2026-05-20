@@ -33,6 +33,8 @@ Ralph-Loop-Infinite is a production-grade autonomous AI system built on enforced
 | **CRITIC** | Identifies concrete issues. Shapes next GENERATOR iteration. | No |
 | **JUDGE** | Scores 5 dimensions. Issues HMAC-signed PASS. | Only via PASS |
 
+> **JUDGE implementation:** The JUDGE role is fulfilled by the `ralph-loop-infinite-verifier.sh` shell script (invoked by the Stop hook) which calls the `judge` subcommand of `ralph-loop-infinite-ralph.py`. This is a Python-based judge operating on the full evidence bundle, not a separately spawned sub-agent with its own context.
+
 ---
 
 ## Installation
