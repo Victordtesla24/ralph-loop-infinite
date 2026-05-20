@@ -19,6 +19,9 @@ from typing import Any
 
 HOME = Path(os.environ.get("HOME", str(Path.home())))
 STATE_DIR = HOME / ".claude" / "state"
+SUB_AGENTS_DIR = HOME / ".sub-agents"
+COUNCIL_DIR = SUB_AGENTS_DIR / "council"    # council-of-3 worker prompts: analyst-programmer, researcher, solutions-architect, qa-verifier, cleanup-agent, hos-orchestrator
+HIERARCHY_DIR = SUB_AGENTS_DIR / "hierarchy"  # effort_cascade.yaml + role_matrix.yaml (effort scaling, role definitions)
 LOG_FILE = STATE_DIR / "ralph-generator.jsonl"
 ARTIFACT_DIR = STATE_DIR / "ralph-generator-artifacts"
 REQUIRED_DEFAULT_ROLES = ("orchestrator", "coder", "tester")
@@ -29,6 +32,8 @@ ROLE_GCJ = {
     "researcher": "GENERATOR",
     "senior-sme": "GENERATOR",
     "analyst-generator": "GENERATOR",
+    "analyst-programmer": "GENERATOR",  # council/analyst-programmer.md
+    "cleanup-agent": "GENERATOR",        # council/cleanup-agent.md
     "tester": "CRITIC",
     "qa-verifier": "CRITIC",
     "analyst-critic": "CRITIC",

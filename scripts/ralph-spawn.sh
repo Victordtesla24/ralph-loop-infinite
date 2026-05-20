@@ -22,6 +22,8 @@ ROLE_TO_GCJ_JSON='{
   "researcher": "GENERATOR",
   "senior-sme": "GENERATOR",
   "analyst-generator": "GENERATOR",
+  "analyst-programmer": "GENERATOR",
+  "cleanup-agent": "GENERATOR",
   "tester": "CRITIC",
   "qa-verifier": "CRITIC",
   "analyst-critic": "CRITIC",
@@ -57,6 +59,8 @@ list_roles() {
 role_prompt_name() {
   case "$1" in
     analyst-generator|analyst-critic) printf 'analyst' ;;
+    analyst-programmer) printf 'analyst-programmer' ;;
+    cleanup-agent) printf 'cleanup-agent' ;;
     *) printf '%s' "$1" ;;
   esac
 }
@@ -137,15 +141,25 @@ BASE_ROLE=$(role_prompt_name "$ROLE")
 SOUL_FILE="${SOUL_DIR}/${BASE_ROLE}.SOUL.md"
 PROMPT_FILE="${PROMPT_DIR}/${BASE_ROLE}.system-prompt.md"
 if [[ ! -f "$SOUL_FILE" || ! -f "$PROMPT_FILE" ]]; then
-  echo "ERROR: role prompt prerequisites missing" >&2
-  [[ -f "$SOUL_FILE" ]] || echo "MISSING: $SOUL_FILE" >&2
-  [[ -f "$PROMPT_FILE" ]] || echo "MISSING: $PROMPT_FILE" >&2
-  echo "Run: RALPH_REPO_LOCAL_MODE=1 scripts/ralph-spawn.sh validate" >&2
-  exit 1
+  # Council fallback: council-only roles (analyst-programmer, cleanup-agent) have no
+  # claude-roles SOUL/prompt — use council/<role>.md as the system prompt directly.
+  COUNCIL_FILE="${COUNCIL_DIR}/${BASE_ROLE}.md"
+  if [[ -f "$COUNCIL_FILE" ]]; then
+    echo "[ralph-spawn] No claude-roles files for '$ROLE' — using council/$BASE_ROLE.md as system prompt"
+    SOUL_CONTENT=""
+    PROMPT_CONTENT=$(<"$COUNCIL_FILE")
+  else
+    echo "ERROR: role prompt prerequisites missing" >&2
+    [[ -f "$SOUL_FILE" ]] || echo "MISSING: $SOUL_FILE" >&2
+    [[ -f "$PROMPT_FILE" ]] || echo "MISSING: $PROMPT_FILE" >&2
+    [[ -f "$COUNCIL_FILE" ]] || echo "MISSING: $COUNCIL_FILE" >&2
+    echo "Run: RALPH_REPO_LOCAL_MODE=1 scripts/ralph-spawn.sh validate" >&2
+    exit 1
+  fi
+else
+  SOUL_CONTENT=$(<"$SOUL_FILE")
+  PROMPT_CONTENT=$(<"$PROMPT_FILE")
 fi
-
-SOUL_CONTENT=$(<"$SOUL_FILE")
-PROMPT_CONTENT=$(<"$PROMPT_FILE")
 
 # Load council deliberation doc for multi-agent context
 COUNCIL_DELIBERATION=""
