@@ -1,5 +1,7 @@
 # AGENTS.md - Your Workspace
 
+> **IMPLEMENTATION REALITY:** The JUDGE role is fulfilled by the `ralph-loop-infinite-verifier.sh` shell script calling `ralph-loop-infinite-ralph.py judge` — a Python function that makes API calls and enforces scoring contracts. This directory (`verifier/`) contains the JUDGE **role contract** (JUDGE.md + SOUL.md) used by the Python judge's system prompts. It is NOT a separately spawned sub-agent with its own conversation context. The `verifier.SOUL.md` file documents the role; actual judging is performed inline by the Python engine operating on the full evidence bundle.
+
 This folder is home. Treat it that way.
 
 ## First Run

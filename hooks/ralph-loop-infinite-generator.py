@@ -20,8 +20,8 @@ from typing import Any
 HOME = Path(os.environ.get("HOME", str(Path.home())))
 STATE_DIR = HOME / ".claude" / "state"
 SUB_AGENTS_DIR = HOME / ".sub-agents"
-COUNCIL_DIR = SUB_AGENTS_DIR / "council"    # council-of-3 worker prompts: analyst-programmer, researcher, solutions-architect, qa-verifier, cleanup-agent, hos-orchestrator
-HIERARCHY_DIR = SUB_AGENTS_DIR / "hierarchy"  # effort_cascade.yaml + role_matrix.yaml (effort scaling, role definitions)
+COUNCIL_DIR = SUB_AGENTS_DIR / "council"    # legacy worker prompts (kept for ref) — see sub-agents/council/README.md
+HIERARCHY_DIR = SUB_AGENTS_DIR / "hierarchy"  # archived role-effort matrices — see sub-agents/hierarchy/README.md
 LOG_FILE = STATE_DIR / "ralph-generator.jsonl"
 ARTIFACT_DIR = STATE_DIR / "ralph-generator-artifacts"
 REQUIRED_DEFAULT_ROLES = ("orchestrator", "coder", "tester")

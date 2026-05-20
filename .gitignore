@@ -12,6 +12,7 @@ build/
 venv/
 .claude/state/
 .claude/secrets/
+.claude/worktrees/
 .hermes/
 state/
 *.local

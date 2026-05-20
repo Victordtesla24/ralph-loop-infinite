@@ -235,6 +235,51 @@ def _artifact_looks_like_test_output(blob: bytes) -> bool:
     return False
 
 
+# Deeper test execution signatures — structured patterns that only appear
+# in genuine test runner output (named test results, summary with timing, etc.).
+_STRING_TEST_EXECUTION_PATTERNS = [
+    # pytest-style: "test_module.py::test_name PASSED [100%]"
+    r"\w+\.py::\w+\s+(PASSED|FAILED|ERROR|SKIPPED|XPASS|XFAIL)",
+    # jest/vitest: checkmark/X followed by test name
+    r"[\u2713\u2717\u2718\u2714\u2716]\s+\w",
+    # unittest: "test_name (module.ClassName) ... ok"
+    r"\w+\s+\([\w.]+\s*\)\s+\.\.\.\s+(ok|FAIL|ERROR)",
+    # go test: "--- PASS: TestName (0.00s)"
+    r"---\s+(PASS|FAIL|SKIP):\s+\w+",
+    # cargo test: "test module::test_name ... ok"
+    r"test\s+[\w:]+\s+\.\.\.\s+(ok|FAILED)",
+    # Common summary: "X passed, Y failed in N.NNs"
+    r"\d+\s+passed,\s+\d+\s+failed\b",
+    # pytest summary line: "================= X passed in N.NNs ================="
+    r"=+\s+\d+\s+passed\b",
+    # Test count: "collected N items" or "N tests found"
+    r"(collected|found|selected)\s+\d+\s+(items?|tests?)",
+    # Timing: "in N.NNs" at end of line
+    r"in\s+\d+\.\d+s\b",
+]
+
+
+def _artifact_has_test_execution_signature(blob: bytes) -> bool:
+    """Return True if `blob` contains structured test-runner-specific output.
+
+    This is a deeper check than _artifact_looks_like_test_output: it looks for
+    actual test execution patterns (named test results, summary with timing)
+    that only a real test runner produces, not just a file that happens to
+    contain the word "pytest" or "passed".
+    """
+    if not blob:
+        return False
+    import re
+    try:
+        text = blob.decode("utf-8", errors="replace")
+    except Exception:
+        return False
+    for pattern in _STRING_TEST_EXECUTION_PATTERNS:
+        if re.search(pattern, text):
+            return True
+    return False
+
+
 def build_bundle(
     *,
     agent_output: str,
@@ -360,6 +405,20 @@ def precheck(bundle: dict[str, Any], agent_output: str) -> dict[str, Any]:
                 reasons.append(
                     f"claim 'Tests: {passed_raw} passed' — artifacts contain '{passed_n} passed' "
                     f"but lack any test-infrastructure marker (pytest, unittest, jest, etc.)"
+                )
+            # Fix 5: Deeper validation — check for structured test-runner output.
+            # Having a test-infra marker is good, but we also want to see evidence
+            # that the test runner actually executed (named test results, summary with
+            # timing, etc.). A file that just contains "pytest" and "42 passed" is
+            # not the same as actual pytest output with individual test results.
+            elif not _any_artifact_or_transcript_supports(
+                bundle, lambda blob: _artifact_has_test_execution_signature(blob)
+            ):
+                reasons.append(
+                    f"claim 'Tests: {passed_raw} passed' — artifacts have test-infrastructure "
+                    f"markers but lack structured test-runner output (individual test results, "
+                    f"summary with timing, collected/found test count). The cited artifact "
+                    f"may be a fabricated summary, not actual test execution output."
                 )
         if failed_n.isdigit():
             ok_fail = _any_artifact_or_transcript_supports(

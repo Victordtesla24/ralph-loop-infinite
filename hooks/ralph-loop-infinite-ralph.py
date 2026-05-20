@@ -1448,10 +1448,50 @@ def cmd_self_test(args: argparse.Namespace) -> int:
         if not isinstance(generated_loop, Generated) or engine.last_loop_result.get("iterations_run") != 1:
             failures.append(f"engine.run did not return typed Generated in standalone loop: {generated_loop}")
 
+    # Fix 4: Live provider call test + full fallback chain verification
+    live_skip_reason = None
+    if os.environ.get("RALPH_LIVE_TEST", "0") == "1":
+        try:
+            _live_crit, live_judge, _ = critique_and_judge(
+                original_prompt="Verify: live provider connectivity test. Return accept with score 1.0 if you can read this.",
+                agent_output="Live provider test output.",
+                evidence_bundle_json="{}",
+                policy={"provider": "anthropic", "model_primary": "claude-opus-4-7", "scoring_threshold": 0.8},
+                session_id="self-test-live",
+                iteration=1,
+            )
+            if not hasattr(live_judge, "decision") or not hasattr(live_judge, "provider"):
+                failures.append("live provider call: judgement missing required fields")
+            elif live_judge.provider == "offline-rule-based":
+                failures.append(f"live provider call: fell back to offline-rule-based — all providers unreachable")
+            elif live_judge.provider in ("",):
+                failures.append("live provider call: provider field empty")
+        except Exception as exc:
+            failures.append(f"live provider call: exception: {exc}")
+    else:
+        live_skip_reason = "RALPH_LIVE_TEST not set to 1"
+
+    # Verify deterministic fallback chain: all providers fail -> offline-rule-based
+    _, j_all_fail, _ = critique_and_judge(
+        original_prompt="Test fallback chain.",
+        agent_output="Short output.",
+        evidence_bundle_json="{}",
+        policy={"provider": "anthropic", "model_primary": "claude-opus-4-7", "scoring_threshold": 0.8},
+        session_id="self-test-fallback",
+        iteration=1,
+        fake_anthropic_failure=True,
+        fake_minimax_failure=True,
+        fake_glm_failure=True,
+    )
+    if j_all_fail.provider != "offline-rule-based":
+        failures.append(f"all-provider-fail should be offline-rule-based, got {j_all_fail.provider}")
+    if j_all_fail.decision != "revise":
+        failures.append(f"all-provider-fail must return revise, got {j_all_fail.decision}")
+
     if failures:
-        print(json.dumps({"status": "FAIL", "failures": failures}, indent=2))
+        print(json.dumps({"status": "FAIL", "failures": failures, "live_skip_reason": live_skip_reason}, indent=2))
         return 1
-    print(json.dumps({"status": "PASS", "tests_run": 14}))
+    print(json.dumps({"status": "PASS", "tests_run": 17, "live_skip_reason": live_skip_reason}))
     return 0
 
 

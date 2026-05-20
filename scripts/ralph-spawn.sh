@@ -95,7 +95,12 @@ validate_runtime() {
     [[ -f "$COUNCIL_DIR/researcher.md" ]]         || { echo "MISSING: council/researcher.md"; missing=1; }
     [[ -f "$COUNCIL_DIR/solutions_architect.md" ]] || { echo "MISSING: council/solutions_architect.md"; missing=1; }
   fi
-  # Validate hierarchy files — removed in Fix 2; hierarchy/ was an unused architectural layer
+  # Validate hierarchy YAMLs (archived role-effort matrices — see sub-agents/hierarchy/README.md)
+  HIERARCHY_DIR_PATH="${RALPH_HIERARCHY_DIR:-$REPO_ROOT/sub-agents/hierarchy}"
+  if [[ -d "$HIERARCHY_DIR_PATH" ]]; then
+    [[ -f "$HIERARCHY_DIR_PATH/effort_cascade.yaml" ]] || { echo "MISSING: hierarchy/effort_cascade.yaml"; missing=1; }
+    [[ -f "$HIERARCHY_DIR_PATH/role_matrix.yaml" ]]   || { echo "MISSING: hierarchy/role_matrix.yaml"; missing=1; }
+  fi
   if [[ $missing -eq 0 ]]; then
     echo "OK: all required runtime prerequisites present"
   else

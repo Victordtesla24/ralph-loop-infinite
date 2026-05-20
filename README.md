@@ -55,7 +55,7 @@ bash bootstrap.sh
 [3/6] Registering contract hashes (~/.claude/manifest/contract-hashes.json)
 [4/6] Creating state directory (~/.claude/state/)
 [5/6] Initializing SQLite database
-[6/6] Running self-test (PASS 26 / FAIL 0)
+[6/6] Running self-test (PASS 27 / FAIL 0)
 ```
 
 ### Runtime Dependencies
@@ -246,10 +246,20 @@ ralph-loop-infinite/
 │   ├── sync-ralph-config.sh        ← Update CLAUDE.md + settings.json
 │   └── install-sub-agents-to-root.sh ← Install sub-agents to VPS
 └── sub-agents/
-    ├── claude-roles/               ← 8 role definitions (GENERATOR/CRITIC/JUDGE)
-    ├── council/                    ← Council worker prompts
-    ├── orchestrator/               ← Orchestrator prompts
-    ├── verifier/                   ← Verifier prompts
+    ├── claude-roles/               ← 8 role definitions (GENERATOR/CRITIC/JUDGE) — canonical
+    ├── council/                    ← Legacy worker prompts (archived — see council/README.md)
+    │   └── README.md               ← Status, why it is not used in v4.x, files inventory
+    ├── hierarchy/                  ← Archived role-effort matrices (see hierarchy/README.md)
+    │   ├── effort_cascade.yaml     ← Effort allocation per role (archived)
+    │   ├── role_matrix.yaml        ← Role classification matrix (archived)
+    │   └── README.md               ← Status and pointers to current production paths
+    ├── orchestrator/               ← Orchestrator prompts (GENERATOR)
+    │   └── RALPH.md                ← GENERATOR stage contract
+    ├── verifier/                   ← JUDGE role contract (NOT a spawned agent — verifier.sh → ralph.py judge)
+    │   ├── JUDGE.md                ← JUDGE stage contract
+    │   └── README.md               ← Why JUDGE is a Python function, not an agent
+    ├── tester/                     ← Tester prompts
+    │   └── CRITIC.md               ← CRITIC stage contract
     └── MANIFEST.sha256.json        ← Prompt integrity registry
 ```
 
@@ -261,17 +271,35 @@ ralph-loop-infinite/
 bash ~/.claude/hooks/test-ralph-refactor.sh
 ```
 
-Expected: **PASS 26 / FAIL 0**
+Expected: **PASS 27 / FAIL 0** (v4.3.0+)
 
 Tests enforce:
 - Threshold ≥ 0.80 on all five dimensions
 - Targeted fix remediation (not naive rewrite)
 - Non-silent provider fallback
-- Content-aware evidence validation
+- Content-aware evidence validation with test-execution signatures
 - Status-token regex enforcement
 - DB-first signed-PASS lookup
 - Anti-weak-criticism rules
 - Anti-leniency rules
+- Live provider connectivity (requires RALPH_LIVE_TEST=1)
+- Full fallback-chain verification
+
+### Running the Self-Test Suite
+
+```bash
+# Ralph engine self-test (17 pure-Python tests)
+python3 ~/.claude/hooks/ralph-loop-infinite-ralph.py self-test
+
+# Evidence precheck self-test (5 tests)
+python3 ~/.claude/hooks/ralph-loop-infinite-evidence.py self-test
+
+# Database self-test
+python3 ~/.claude/hooks/ralph-loop-infinite-db.py self-test
+
+# Live provider test (requires API keys)
+RALPH_LIVE_TEST=1 python3 ~/.claude/hooks/ralph-loop-infinite-ralph.py self-test
+```
 
 ---
 
@@ -318,6 +346,6 @@ hopeful outputs        →  measured decisions
 
 ---
 
-*Ralph-Loop-Infinite v4.2.1 — Production Implementation*
+*Ralph-Loop-Infinite v4.3.0 — Production Implementation*
 *https://github.com/Victordtesla24/ralph-loop-infinite*
 *Independent verifier · HMAC-signed PASS · Explicit contracts · No silent failures*
