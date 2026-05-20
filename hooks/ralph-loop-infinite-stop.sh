@@ -168,12 +168,27 @@ db_record_verifier() {
 }
 
 db_event() {
+  local sess="${1:-}"
+  local evtype="${2:-}"
+  local payload="${3:-{}}"
+  local corr="${4:-}"
+  [[ -z "$corr" ]] && corr=$(python3 - <<'PY' "$sess" "$evtype"
+import hashlib,sys,time
+s,e=sys.argv[1],sys.argv[2]
+print(hashlib.sha256(f"{s}:{e}:{time.time()}".encode()).hexdigest()[:16])
+PY
+)
   if db_available; then
-    python3 "$DB_HELPER" event \
-      --hook "stop" \
-      --session-id "${1:-}" \
-      --event-type "${2:-}" \
-      --data-json "${3:-{}}" >/dev/null 2>&1 || true
+    local wrapped
+    wrapped=$(jq -cn \
+      --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      --arg hook "stop" \
+      --arg s "$sess" \
+      --arg et "$evtype" \
+      --arg cid "$corr" \
+      --argjson p "${payload:-{}}" \
+      '{schema:"ralph.event.v1",ts:$ts,hook:$hook,session_id:$s,event_type:$et,correlation_id:$cid,payload:$p}')
+    python3 "$DB_HELPER" event --hook "stop" --session-id "$sess" --event-type "$evtype" --data-json "$wrapped" >/dev/null 2>&1 || true
   fi
 }
 
@@ -1076,11 +1091,13 @@ PY
         --set "verifier_last_score=${CURRENT_SCORE}" \
         --set "verifier_last_verdict=CONVERGENCE" \
         --set "remediation_explicit_blocker=false" >/dev/null 2>&1 || true
-      # Default production gate is stricter than the blog: convergence escalates
-      # because only HMAC-signed PASS exits. Operators who need exact blog
-      # semantics can opt in with RALPH_CONVERGENCE_EXIT=1, which returns the
-      # current output on convergence without granting verifier PASS.
-      if [[ "${RALPH_CONVERGENCE_EXIT:-0}" == "1" ]]; then
+      # Convergence mode is policy-driven. strict => continue remediation;
+      # blog-compatible => return current output on convergence without PASS.
+      CONVERGENCE_MODE=$(python3 "$POLICY_HELPER" convergence-mode 2>/dev/null || echo "strict")
+      if [[ "$CONVERGENCE_MODE" != "blog-compatible" && "${RALPH_CONVERGENCE_EXIT:-0}" == "1" ]]; then
+        CONVERGENCE_MODE="blog-compatible"
+      fi
+      if [[ "$CONVERGENCE_MODE" == "blog-compatible" ]]; then
         python3 "$DB_HELPER" state-update \
           --session-id "${HOOK_SESSION:-unknown}" \
           --set "verifier_last_verdict=CONVERGENCE_RETURN" \
@@ -1090,9 +1107,9 @@ PY
           --hook "stop" \
           --session-id "${HOOK_SESSION:-unknown}" \
           --event-type "convergence-return" \
-          --data-json '{"reason":"blog-convergence-return","iteration":'"$ITERATION"',"current_score":'"$CURRENT_SCORE"',"prev_score":'"$PREV_SCORE"',"status":"'"$CONV_STATUS"'"}' >/dev/null 2>&1 || true
+          --data-json '{"reason":"blog-convergence-return","mode":"blog-compatible","iteration":'"$ITERATION"',"current_score":'"$CURRENT_SCORE"',"prev_score":'"$PREV_SCORE"',"status":"'"$CONV_STATUS"'"}' >/dev/null 2>&1 || true
         log "ALLOW convergence return mode iter=$ITERATION sess=${HOOK_SESSION:-unknown} score=$CURRENT_SCORE prev=$PREV_SCORE"
-        jq -n --arg msg "Ralph-loop-infinite convergence return mode enabled: score $CURRENT_SCORE <= previous $PREV_SCORE (iteration $ITERATION). Returning current output per Ralph blog semantics; no verifier PASS was granted." '{decision:"allow", reason:$msg}'
+        jq -n --arg msg "Ralph-loop-infinite convergence return mode enabled (mode=blog-compatible): score $CURRENT_SCORE <= previous $PREV_SCORE (iteration $ITERATION). Returning current output per Ralph blog semantics; no verifier PASS was granted." '{decision:"allow", reason:$msg}'
         exit 0
       fi
       # NOT a blocker — escalation only. Agent cannot exit via convergence.

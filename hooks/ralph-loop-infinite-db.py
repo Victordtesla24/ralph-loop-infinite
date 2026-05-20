@@ -988,6 +988,30 @@ def cmd_event(args: argparse.Namespace) -> int:
     except json.JSONDecodeError:
         data = {"raw": args.data_json}
 
+    session_id = args.session_id or ""
+    payload = data if isinstance(data, dict) else {"value": data}
+    if isinstance(data, dict) and data.get("schema") == "ralph.event.v1" and data.get("correlation_id"):
+        normalized = data
+    else:
+        iter_val = payload.get("iteration") if isinstance(payload, dict) else None
+        try:
+            iter_num = int(iter_val)
+        except Exception:
+            iter_num = 0
+        seed = f"{session_id}:{args.hook}:{args.event_type}:{iter_num}:{now}"
+        correlation_id = payload.get("correlation_id") if isinstance(payload, dict) else ""
+        if not correlation_id:
+            correlation_id = hashlib.sha256(seed.encode("utf-8", errors="replace")).hexdigest()[:16]
+        normalized = {
+            "schema": "ralph.event.v1",
+            "ts": now,
+            "hook": args.hook,
+            "session_id": session_id,
+            "event_type": args.event_type,
+            "correlation_id": correlation_id,
+            "payload": payload,
+        }
+
     try:
         with get_db() as conn:
             init_schema(conn)
@@ -998,7 +1022,7 @@ def cmd_event(args: argparse.Namespace) -> int:
                 INSERT INTO hook_events (id, ts, hook, session_id, event_type, data_json)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (event_id, now, args.hook, args.session_id or "", args.event_type, json.dumps(data)),
+                (event_id, now, args.hook, session_id, args.event_type, json.dumps(normalized)),
             )
         print(json.dumps({"status": "ok", "event_id": event_id}))
         return 0

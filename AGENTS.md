@@ -320,7 +320,7 @@ When running the autonomous pipeline outside a bare Claude Code chat:
 
 3. **Orchestrator** — `hos-orchestrator` (Anthropic `claude-opus-4-7`, max effort, 1M context) runs **inside** the loop when armed. Spawns council workers per `~/.sub-agents/council/`.
 
-4. **Verifier** — Independent agent **outside** the loop (fresh context). Same model tier. Only HMAC-signed PASS from `~/.claude/hooks/ralph-loop-infinite-verifier.sh` exits the loop. User PASS also valid for 120s when typed while gate armed.
+4. **Verifier** — Independent agent **outside** the loop (fresh context). Same model tier. Only HMAC-signed PASS from `~/.claude/hooks/ralph-loop-infinite-verifier.sh` exits the loop. User-typed PASS/approval phrases are feedback only and never exit the loop.
 
 5. **Friday (Cursor lead)** — Default disposition **outside** the loop unless the user explicitly pushes Friday in. Friday monitors orchestrator/verifier, seeds Kanban, and reports completions only.
 

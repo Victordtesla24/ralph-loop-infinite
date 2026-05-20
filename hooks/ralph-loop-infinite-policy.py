@@ -73,6 +73,7 @@ DEFAULT_POLICY = {
     "scoring_dimensions": list(SCORING_DIMENSIONS),
     "scoring_threshold": 0.8,
     "forbid_downgrade_without_unavailability_record": True,
+    "convergence_mode": "strict",
 }
 
 
@@ -207,6 +208,7 @@ def main() -> int:
     sub.add_parser("allowlist", help="print model allowlist (one per line)")
     sub.add_parser("scoring-threshold", help="print scoring threshold")
     sub.add_parser("scoring-dimensions", help="print scoring dimensions (one per line)")
+    sub.add_parser("convergence-mode", help="print convergence mode (strict|blog-compatible)")
 
     args = parser.parse_args()
     if not args.cmd:
@@ -257,6 +259,12 @@ def main() -> int:
     if args.cmd == "scoring-dimensions":
         for d in policy.get("scoring_dimensions") or []:
             print(d)
+        return 0
+    if args.cmd == "convergence-mode":
+        mode = str(policy.get("convergence_mode", "strict") or "strict")
+        if mode not in {"strict", "blog-compatible"}:
+            mode = "strict"
+        print(mode)
         return 0
     if args.cmd == "allow":
         ok, reason = allow(args.provider, args.model)

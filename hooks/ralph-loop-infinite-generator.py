@@ -155,6 +155,28 @@ def run_role(spawn: Path, role: str, task: str, timeout: int, dry_run: bool, ses
     return result
 
 
+def _role_content_validate(role: str, artifact: dict[str, Any]) -> list[str]:
+    errs: list[str] = []
+    payload = artifact.get("executor_payload")
+    if not isinstance(payload, dict):
+        errs.append(f"stage-payload-missing:{role}")
+        return errs
+
+    if role == "orchestrator":
+        if not payload.get("plan") and not payload.get("steps"):
+            errs.append("stage-content-missing:orchestrator:plan_or_steps")
+    elif role == "coder":
+        changed = payload.get("changed_files") or payload.get("patches") or payload.get("diff")
+        if not changed:
+            errs.append("stage-content-missing:coder:changed_files_or_diff")
+    elif role in {"tester", "qa-verifier"}:
+        has_tests = payload.get("test_results") or payload.get("tests") or payload.get("verification")
+        if not has_tests:
+            errs.append("stage-content-missing:tester:test_results_or_verification")
+
+    return errs
+
+
 def validate_results(results: list[dict[str, Any]], required_roles: list[str]) -> tuple[bool, list[str], list[str]]:
     missing: list[str] = []
     artifacts: list[str] = []
@@ -171,6 +193,11 @@ def validate_results(results: list[dict[str, Any]], required_roles: list[str]) -
             missing.append(f"stage-artifact-missing:{role}")
         else:
             artifacts.append(ev)
+            try:
+                artifact = json.loads(Path(ev).read_text(encoding="utf-8", errors="replace"))
+                missing.extend(_role_content_validate(role, artifact))
+            except Exception:
+                missing.append(f"stage-artifact-unparseable:{role}")
         if not r.get("artifact_schema"):
             missing.append(f"stage-schema-missing:{role}")
     return not missing, missing, artifacts

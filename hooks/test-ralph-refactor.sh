@@ -22,20 +22,51 @@ ALLOW_LIVE=0
 for arg in "$@"; do
   [[ "$arg" == "--allow-live" ]] && ALLOW_LIVE=1
 done
-STAGED_DIR="${STAGED_DIR:-/tmp/ralph-refactor/hooks}"
-LIVE_DIR="${LIVE_DIR:-/Users/vic/.claude/hooks}"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+STAGED_DIR="${STAGED_DIR:-$SCRIPT_DIR}"
+LIVE_DIR="${LIVE_DIR:-$HOME/.claude/hooks}"
+SOURCE_MODE="${SOURCE_MODE:-staged}"
 STAGED_REAL=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$STAGED_DIR")
 LIVE_REAL=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$LIVE_DIR")
 if [[ "$STAGED_REAL" == "$LIVE_REAL" && "$ALLOW_LIVE" -ne 1 ]]; then
   echo "ERROR: STAGED_DIR resolves to LIVE_DIR ($LIVE_DIR). Refusing to mutate/audit live hooks without --allow-live." >&2
   exit 2
 fi
-if [[ ! -d "$STAGED_DIR" || -z "$(find "$STAGED_DIR" -maxdepth 1 -type f -print -quit 2>/dev/null)" ]]; then
-  mkdir -p "$STAGED_DIR"
-  for f in "$LIVE_DIR"/*; do
-    [[ -f "$f" ]] && cp "$f" "$STAGED_DIR/"
-  done
+if [[ "$SOURCE_MODE" != "staged" && "$SOURCE_MODE" != "live" ]]; then
+  echo "ERROR: SOURCE_MODE must be 'staged' or 'live' (got '$SOURCE_MODE')." >&2
+  exit 2
 fi
+if [[ "$SOURCE_MODE" == "live" && "$ALLOW_LIVE" -ne 1 ]]; then
+  echo "ERROR: SOURCE_MODE=live requires --allow-live." >&2
+  exit 2
+fi
+if [[ "$SOURCE_MODE" == "staged" && ! -d "$STAGED_DIR" ]]; then
+  echo "ERROR: staged source directory missing: $STAGED_DIR" >&2
+  exit 2
+fi
+if [[ "$SOURCE_MODE" == "live" && ! -d "$LIVE_DIR" ]]; then
+  echo "ERROR: live source directory missing: $LIVE_DIR" >&2
+  exit 2
+fi
+SOURCE_DIR="$STAGED_DIR"
+if [[ "$SOURCE_MODE" == "live" ]]; then
+  SOURCE_DIR="$LIVE_DIR"
+fi
+REQUIRED_FILES=(
+  ralph-loop-infinite-stop.sh
+  ralph-loop-infinite-verifier.sh
+  ralph-loop-infinite-ralph.py
+  ralph-loop-infinite-policy.py
+  ralph-loop-infinite-evidence.py
+  ralph-loop-infinite-db.py
+  ralph-loop-infinite-generator.py
+)
+for req in "${REQUIRED_FILES[@]}"; do
+  if [[ ! -r "$SOURCE_DIR/$req" ]]; then
+    echo "ERROR: required source file missing or unreadable: $SOURCE_DIR/$req" >&2
+    exit 2
+  fi
+done
 SBX_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/rli-refactor-test.XXXXXX")
 trap 'rm -rf "$SBX_ROOT" 2>/dev/null || true' EXIT INT TERM
 
@@ -46,20 +77,26 @@ FAILED=()
 pass() { PASS=$((PASS + 1)); printf '  \033[32mPASS\033[0m %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); FAILED+=("$1"); printf '  \033[31mFAIL\033[0m %s\n' "$1"; }
 
-LIVE_STATE_SHA=$(shasum -a 256 "$LIVE_DIR/ralph-loop-infinite-stop.sh" 2>/dev/null | awk '{print $1}')
-LIVE_VERIFIER_SHA=$(shasum -a 256 "$LIVE_DIR/ralph-loop-infinite-verifier.sh" 2>/dev/null | awk '{print $1}')
+LIVE_STATE_SHA=""
+LIVE_VERIFIER_SHA=""
+if [[ -r "$LIVE_DIR/ralph-loop-infinite-stop.sh" ]]; then
+  LIVE_STATE_SHA=$(shasum -a 256 "$LIVE_DIR/ralph-loop-infinite-stop.sh" 2>/dev/null | awk '{print $1}')
+fi
+if [[ -r "$LIVE_DIR/ralph-loop-infinite-verifier.sh" ]]; then
+  LIVE_VERIFIER_SHA=$(shasum -a 256 "$LIVE_DIR/ralph-loop-infinite-verifier.sh" 2>/dev/null | awk '{print $1}')
+fi
 
 echo "=== RALPH refactor sandbox: $SBX_ROOT ==="
 mkdir -p "$SBX_ROOT/.claude/hooks" "$SBX_ROOT/.claude/state" "$SBX_ROOT/.claude/secrets"
 chmod 700 "$SBX_ROOT/.claude/state" "$SBX_ROOT/.claude/secrets"
-for f in "$STAGED_DIR"/*; do
+for f in "$SOURCE_DIR"/*; do
   [[ -f "$f" ]] && cp "$f" "$SBX_ROOT/.claude/hooks/"
 done
-# Copy unchanged supporting helpers from the live tree so the sandbox is
+# Copy unchanged supporting helpers from source tree so the sandbox is
 # functional. None of these are mutated.
 for helper in ralph-loop-infinite-tsparse.py ralph-loop-infinite-pathguard.py ralph-loop-infinite-contract.md ralph-loop-infinite-db.sh; do
-  if [[ -f "$LIVE_DIR/$helper" ]]; then
-    cp "$LIVE_DIR/$helper" "$SBX_ROOT/.claude/hooks/"
+  if [[ -f "$SOURCE_DIR/$helper" ]]; then
+    cp "$SOURCE_DIR/$helper" "$SBX_ROOT/.claude/hooks/"
   fi
 done
 chmod +x "$SBX_ROOT/.claude/hooks/"*.sh "$SBX_ROOT/.claude/hooks/"*.py 2>/dev/null || true
@@ -416,6 +453,33 @@ if grep -q 'RALPH_CONVERGENCE_EXIT' "$STOP_SH" && grep -q 'CONVERGENCE_RETURN' "
 else
   fail "stop hook missing explicit blog-compatible convergence return mode"
 fi
+POLICY_DEFAULT_MODE=$(python3 "$POLICY_HELPER" convergence-mode 2>/dev/null || echo "")
+if [[ "$POLICY_DEFAULT_MODE" == "strict" ]]; then
+  pass "policy convergence-mode default is strict"
+else
+  fail "policy convergence-mode default expected strict (got $POLICY_DEFAULT_MODE)"
+fi
+cat > "$HOME/.claude/settings.local.json" <<'JSON'
+{
+  "_ralphLoopInfiniteExitPolicy": {
+    "verifier_policy": {
+      "convergence_mode": "blog-compatible"
+    }
+  }
+}
+JSON
+POLICY_OVERRIDE_MODE=$(python3 "$POLICY_HELPER" convergence-mode 2>/dev/null || echo "")
+if [[ "$POLICY_OVERRIDE_MODE" == "blog-compatible" ]]; then
+  pass "policy convergence-mode override supports blog-compatible"
+else
+  fail "policy convergence-mode override failed (got $POLICY_OVERRIDE_MODE)"
+fi
+if grep -q '"mode":"blog-compatible"' "$STOP_SH" && grep -q 'convergence-return' "$STOP_SH"; then
+  pass "stop convergence-return payload includes mode=blog-compatible"
+else
+  fail "stop convergence-return payload missing mode=blog-compatible"
+fi
+rm -f "$HOME/.claude/settings.local.json"
 if grep -q 'CLAUDE_CLI_MISSING' "$STOP_SH" && grep -q 'GENERATOR_INLINE_ONLY_OK' "$STOP_SH"; then
   pass "stop hook logs missing Claude CLI and downgrades to inline-only generator"
 else
@@ -437,7 +501,14 @@ python3 - <<'PY' "$role" "${RALPH_ROLE_EVIDENCE_FILE:-}"
 import json, pathlib, sys
 role, ev = sys.argv[1], sys.argv[2]
 p = pathlib.Path(ev); p.parent.mkdir(parents=True, exist_ok=True)
-p.write_text(json.dumps({"role": role, "executor_schema": "harness.v1"}) + "\n")
+payload = {"role": role, "executor_schema": "harness.v1"}
+if role == "orchestrator":
+    payload["plan"] = ["step-1"]
+elif role == "coder":
+    payload["changed_files"] = ["hooks/example.py"]
+elif role in {"tester", "qa-verifier"}:
+    payload["test_results"] = {"passed": 1, "failed": 0}
+p.write_text(json.dumps(payload) + "\n")
 print("ok", role)
 PY
 SH

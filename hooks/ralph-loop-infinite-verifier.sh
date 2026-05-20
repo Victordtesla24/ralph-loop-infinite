@@ -78,12 +78,27 @@ db_record_verifier() {
   fi
 }
 db_event() {
+  local sess="${1:-}"
+  local evtype="${2:-}"
+  local payload="${3:-{}}"
+  local corr="${4:-}"
+  [[ -z "$corr" ]] && corr=$(python3 - <<'PY' "$sess" "$evtype"
+import hashlib,sys,time
+s,e=sys.argv[1],sys.argv[2]
+print(hashlib.sha256(f"{s}:{e}:{time.time()}".encode()).hexdigest()[:16])
+PY
+)
   if db_available; then
-    python3 "$DB_HELPER" event \
-      --hook "verifier" \
-      --session-id "${1:-}" \
-      --event-type "${2:-}" \
-      --data-json "${3:-{}}" >/dev/null 2>&1 || true
+    local wrapped
+    wrapped=$(jq -cn \
+      --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      --arg hook "verifier" \
+      --arg s "$sess" \
+      --arg et "$evtype" \
+      --arg cid "$corr" \
+      --argjson p "${payload:-{}}" \
+      '{schema:"ralph.event.v1",ts:$ts,hook:$hook,session_id:$s,event_type:$et,correlation_id:$cid,payload:$p}')
+    python3 "$DB_HELPER" event --hook "verifier" --session-id "$sess" --event-type "$evtype" --data-json "$wrapped" >/dev/null 2>&1 || true
   fi
 }
 

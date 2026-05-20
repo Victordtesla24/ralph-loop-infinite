@@ -210,6 +210,11 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _new_corr(session_id: str, iteration: int, stage: str) -> str:
+    seed = f"{session_id}:{iteration}:{stage}:{now_iso()}"
+    return hashlib.sha256(seed.encode("utf-8", errors="replace")).hexdigest()[:16]
+
+
 def log_stage(stage: str, payload: dict[str, Any]) -> None:
     """Append a structured stage log line. Never raises; never leaks secrets.
 
@@ -220,7 +225,8 @@ def log_stage(stage: str, payload: dict[str, Any]) -> None:
     try:
         THINKING_LOG.parent.mkdir(parents=True, exist_ok=True)
         scrubbed = _scrub_secrets(payload)
-        record = {"ts": now_iso(), "stage": stage, **scrubbed}
+        corr = str(scrubbed.get("correlation_id") or _new_corr(str(scrubbed.get("session_id") or "unknown"), int(scrubbed.get("iteration") or 0), stage))
+        record = {"schema": "ralph.event.v1", "correlation_id": corr, "ts": now_iso(), "stage": stage, **scrubbed}
         with THINKING_LOG.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, sort_keys=True) + "\n")
     except Exception:
@@ -806,12 +812,16 @@ def offline_rule_based_judge(*, original_prompt: str, agent_output: str, evidenc
     missing=[]; deviations=[]
     try: bundle=json.loads(evidence_bundle_json or "{}")
     except json.JSONDecodeError: bundle={}; missing.append("evidence-bundle-json")
+    cited = bundle.get("cited_artifacts") or []
+    if not cited:
+        missing.append("offline-fallback-no-cited-artifacts")
     if not agent_output.strip() or "empty agent output" in agent_output.lower(): missing.append("agent-output")
     if len(agent_output.strip()) < 200: deviations.append("agent-output-too-short-for-structural-validation")
+    gate_tail = " ".join(bundle.get("gate_log_tail") or [])
+    if "precheck" not in gate_tail.lower():
+        deviations.append("offline-fallback-missing-precheck-corroboration")
     if critique.issues: deviations.extend(critique.issues[:3])
     evidence = "offline deterministic structural check; provider=offline-rule-based; fail-closed: offline fallback cannot PASS"
-    # Offline fallback is diagnostic only. Semantic quality must be accepted by a
-    # real judge provider; when providers are unavailable, the loop must revise.
     base = min(float(threshold) - 0.01, 0.79)
     if missing or deviations:
         base = min(base, 0.45)
@@ -863,7 +873,8 @@ class RalphLoopEngine:
         self.transitions: list[dict[str, Any]] = []
 
     def _transition(self, stage: str, **payload: Any) -> None:
-        record = {"session_id": self.session_id, "iteration": self.iteration, "stage": stage, **payload}
+        corr = _new_corr(self.session_id, self.iteration, stage)
+        record = {"schema": "ralph.event.v1", "correlation_id": corr, "session_id": self.session_id, "iteration": self.iteration, "stage": stage, **payload}
         self.transitions.append(record)
         log_stage(f"engine_{stage}", record)
 
@@ -1431,6 +1442,76 @@ def cmd_self_test(args: argparse.Namespace) -> int:
     off_good_shape = offline_rule_based_judge(original_prompt="p", agent_output="x" * 1000, evidence_bundle_json="{}", critique=Critique(), threshold=0.8, effort="max")
     if off_good_shape.decision != "revise" or off_good_shape.overall_score >= 0.8:
         failures.append(f"offline fallback must never accept, got: {off_good_shape}")
+
+    # Fix 4: live provider call test — verify API endpoint responds with
+    # either a valid completion or a correctly-handled auth error. Does NOT
+    # succeed if the call silently falls through without logging.
+    _live_test_tmp = Path(os.environ.get("TMPDIR", "/tmp")) / f"rli-live-{os.getpid()}"
+    _live_test_tmp.mkdir(exist_ok=True)
+    _live_out = _live_test_tmp / "live_out.json"
+    _live_err = _live_test_tmp / "live_err.txt"
+    _live_key, _live_src = load_key("ANTHROPIC_API_KEY")
+    if _live_key and _live_key != "missing":
+        try:
+            import urllib.request, urllib.error
+            req = urllib.request.Request(
+                "https://api.anthropic.com/v1/messages",
+                data=json.dumps({
+                    "model": "claude-opus-4-7",
+                    "max_tokens": 10,
+                    "messages": [{"role": "user", "content": "ping"}]
+                }).encode(),
+                headers={
+                    "x-api-key": _live_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                body = json.loads(resp.read())
+                if "content" in body or "message" in body:
+                    pass  # Live call succeeded
+                else:
+                    failures.append(f"live API call returned unexpected shape: {body}")
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                pass  # Auth error means key is live, just rejected - OK
+            else:
+                failures.append(f"live API call HTTP error {e.code}: {e.read()}")
+        except Exception as exc:
+            failures.append(f"live provider call failed unexpectedly: {exc}")
+    else:
+        # No key — verify the fallback chain is used and logged instead of silently failing
+        _logged_fb = False
+        try:
+            _thinking_log = Path.home() / ".claude" / "state" / "ralph-thinking-loop.jsonl"
+            _before = _thinking_log.read_text() if _thinking_log.exists() else ""
+            _result = offline_rule_based_judge(
+                original_prompt="test", agent_output="response", evidence_bundle_json="{}",
+                critique=Critique(issues=[]), threshold=0.8, effort="max"
+            )
+            _after = _thinking_log.read_text() if _thinking_log.exists() else ""
+            if "offline-rule-based" in _after:
+                _logged_fb = True
+        except Exception:
+            pass
+        if not _logged_fb:
+            failures.append("live provider test: no API key but offline fallback not logged")
+
+    # Fix 6: verify that provider_attempt field is recorded in the stage log
+    # when a fallback path is used (even offline), ensuring non-silent downgrade.
+    _provider_attempt_found = False
+    try:
+        _thinking_log = Path.home() / ".claude" / "state" / "ralph-thinking-loop.jsonl"
+        if _thinking_log.exists():
+            _log_lines = _thinking_log.read_text()
+            if "provider_attempt" in _log_lines or "provider_skip" in _log_lines:
+                _provider_attempt_found = True
+    except Exception:
+        pass
+    if not _provider_attempt_found:
+        failures.append("stage log missing provider_attempt/provider_skip field for fallback tracking")
 
     if "RalphLoopEngine" not in globals():
         failures.append("missing explicit RalphLoopEngine owner for generate→critique→judge→remediate")
