@@ -204,6 +204,37 @@ def _bytes_contain_ratio(blob: bytes, num: str, denom: str) -> bool:
     return "100%" in text and n == d
 
 
+# Heuristic markers that indicate genuine test infrastructure output, not just
+# a fabricated claim string. At least one of these must be present alongside
+# the "N passed" token for the artifact to be considered a real test run.
+_TEST_INFRA_MARKERS = [
+    b"pytest", b"unittest", b"jest", b"mocha", b"vitest",
+    b"npm test", b"yarn test", b"pnpm test",
+    b"python -m pytest", b"python -m unittest",
+    b"go test", b"cargo test", b"cargo nextest",
+    b"rspec", b"minitest", b"testsuite",
+    b"--tb=", b"--verbose", b"--v", b"-v ",
+    b"PASSED", b"FAILED", b"ERROR",
+    b"test result", b"testsuit",
+    b"Collecting", b"running", b"collected",
+]
+
+
+def _artifact_looks_like_test_output(blob: bytes) -> bool:
+    """Return True if `blob` contains at least one test-infrastructure marker.
+
+    This distinguishes genuine test execution output (pytest summary, jest
+    output, etc.) from a fabricated file that merely contains the claim
+    string "N passed" without any actual test infrastructure evidence.
+    """
+    if not blob:
+        return False
+    for marker in _TEST_INFRA_MARKERS:
+        if marker in blob:
+            return True
+    return False
+
+
 def build_bundle(
     *,
     agent_output: str,
@@ -323,6 +354,13 @@ def precheck(bundle: dict[str, Any], agent_output: str) -> dict[str, Any]:
                     f"claim 'Tests: {passed_raw} passed' has no matching '{passed_n} passed' "
                     f"token in any cited artifact or the transcript"
                 )
+            elif not _any_artifact_or_transcript_supports(
+                bundle, lambda blob: _artifact_looks_like_test_output(blob)
+            ):
+                reasons.append(
+                    f"claim 'Tests: {passed_raw} passed' — artifacts contain '{passed_n} passed' "
+                    f"but lack any test-infrastructure marker (pytest, unittest, jest, etc.)"
+                )
         if failed_n.isdigit():
             ok_fail = _any_artifact_or_transcript_supports(
                 bundle, lambda blob, n=failed_n: _bytes_contain_numeric_token(blob, n, "failed")
@@ -396,7 +434,13 @@ def _self_test() -> int:
     tmp = Path(os.environ.get("TMPDIR", "/tmp")) / f"rli-evidence-{os.getpid()}"
     tmp.mkdir(parents=True, exist_ok=True)
     art_match = tmp / "report-match.log"
-    art_match.write_bytes(b"summary: 42 passed, 0 failed\nrequirements 17/17\n")
+    art_match.write_bytes(
+        b"============================= test session starts ==============================\n"
+        b"collected 42 items\n"
+        b"tests/test_core.py::test_ok PASSED\n"
+        b"42 passed, 0 failed in 3.14s\n"
+        b"requirements 17/17 (100%)\n"
+    )
     art_mismatch = tmp / "report-mismatch.log"
     art_mismatch.write_bytes(b"this artifact mentions nothing about tests")
 
@@ -456,7 +500,58 @@ def _self_test() -> int:
     if pre_inv["verdict"] != "FAIL":
         failures.append("structural 4/5 (100%) claim should FAIL")
 
-    for p in (art_match, art_mismatch):
+    # Fix 5: fake test output — contains "42 passed" but no test infra markers
+    art_fake = tmp / "report-fake.log"
+    art_fake.write_bytes(b"summary: 42 passed, 0 failed\nsome log entry\nno test runner here\n")
+    agent_output_fake = (
+        f"Tests: 42 passed, 0 failed\n"
+        f"Server exceptions: 0\n"
+        f"Requirements satisfied: 17/17 (100%)\n"
+        f"see {art_fake}\n"
+    )
+    bundle_fake = build_bundle(
+        agent_output=agent_output_fake,
+        original_prompt="test",
+        transcript_path="",
+        session_id="self-test",
+        iteration=1,
+        state_file="",
+    )
+    pre_fake = precheck(bundle_fake, agent_output_fake)
+    if pre_fake["verdict"] != "FAIL":
+        failures.append(f"fake test output (no infra markers) should FAIL precheck, got {pre_fake}")
+    if not any("test-infrastructure marker" in r for r in pre_fake.get("reasons", [])):
+        failures.append("FAIL reason for fake test output should mention missing infra markers")
+
+    # Fix 5: real test output — contains "42 passed" AND pytest markers
+    art_real = tmp / "report-real.log"
+    art_real.write_bytes(
+        b"============================= test session starts ==============================\n"
+        b"collected 42 items\n"
+        b"tests/test_core.py::test_ok PASSED\n"
+        b"tests/test_api.py::test_health PASSED\n"
+        b"42 passed, 0 failed in 3.14s\n"
+        b"requirements 17/17 (100%)\n"
+    )
+    agent_output_real = (
+        f"Tests: 42 passed, 0 failed\n"
+        f"Server exceptions: 0\n"
+        f"Requirements satisfied: 17/17 (100%)\n"
+        f"see {art_real}\n"
+    )
+    bundle_real = build_bundle(
+        agent_output=agent_output_real,
+        original_prompt="test",
+        transcript_path="",
+        session_id="self-test",
+        iteration=1,
+        state_file="",
+    )
+    pre_real = precheck(bundle_real, agent_output_real)
+    if pre_real["verdict"] != "PASS":
+        failures.append(f"real test output (has pytest + '42 passed') should PASS precheck, got {pre_real}")
+
+    for p in (art_match, art_mismatch, art_fake, art_real):
         try:
             p.unlink()
         except OSError:
@@ -469,7 +564,7 @@ def _self_test() -> int:
     if failures:
         print(json.dumps({"status": "FAIL", "failures": failures}, indent=2))
         return 1
-    print(json.dumps({"status": "PASS", "tests_run": 3}))
+    print(json.dumps({"status": "PASS", "tests_run": 5}))
     return 0
 
 
