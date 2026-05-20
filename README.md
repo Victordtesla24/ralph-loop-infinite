@@ -160,6 +160,9 @@ Orchestrator (GENERATOR) ──▶ Worker/Coder (GENERATOR) ──▶ Evidence
 ```
 
 Workers do NOT self-assess. Orchestrator routes to JUDGE. Only JUDGE can stop the loop.
+
+> **Note on JUDGE implementation:** The JUDGE role is fulfilled by the `ralph-loop-infinite-verifier.sh` shell script which invokes the `judge` subcommand of `ralph-loop-infinite-ralph.py`. This is a Python-based judge operating on the full evidence bundle, not a separately spawned sub-agent with its own context.
+
 On verifier FAIL or evidence PRECHECK_FAIL, `ralph-loop-infinite-stop.sh` deterministically invokes `ralph-loop-infinite-generator.py`, which dispatches explicit `orchestrator,coder,tester` stages through `scripts/ralph-spawn.sh` (configurable via `RALPH_GENERATOR_ROLES`). Success requires every required stage to exit 0 and write an evidence artifact. The Stop hook monitors and records state; the generator subprocess is the autonomous executor backend.
 
 > **Verifier architecture note:** The JUDGE is **not** spawned as a separate sub-agent process. Instead, `ralph-loop-infinite-verifier.sh` calls `ralph-loop-infinite-ralph.py judge`, which runs the `critique_and_judge()` Python function — making two API calls (CRITIC, then JUDGE) with separate system prompts, parsing structured JSON responses, and enforcing the scoring contract in code. The HMAC signing happens in the shell after the Python judge returns. The `sub-agents/verifier/` directory and `verifier.SOUL.md` contain the JUDGE role contract used by the prompts, not an independently running agent.
