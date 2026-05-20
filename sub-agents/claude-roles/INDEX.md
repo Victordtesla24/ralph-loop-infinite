@@ -56,7 +56,7 @@ Each role is defined by two files:
 ## Dispatch Rules
 
 - Orchestrator MUST load SOUL files and verify classification before dispatch
-- Workers are spawned from `hierarchy/` or `council/` with SOUL classification attached
+- Workers are spawned from `council/` with SOUL classification attached
 - Verifier (JUDGE) is NEVER spawned as a worker — it is always called directly by stop.sh
 - No sub-agent may self-declare done; only JUDGE HMAC-signed PASS ends the loop
 - Orchestrator cannot self-execute (cannot do the work it pretends to delegate)

@@ -211,7 +211,6 @@ All sub-agents are classified under one of three roles from the blog:
 │   ├── tester.SOUL.md         CRITIC
 │   └── verifier.SOUL.md       JUDGE     (role contract for the Python judge, NOT a separately spawned agent)
 ├── council/                ← Worker prompts (GENERATOR + CRITIC)
-├── hierarchy/              ← Role effort/matrix definitions
 ├── orchestrator/           ← Orchestrator prompts (GENERATOR)
 └── verifier/               ← Verifier prompts (JUDGE)
 ```
@@ -249,7 +248,6 @@ ralph-loop-infinite/
 └── sub-agents/
     ├── claude-roles/               ← 8 role definitions (GENERATOR/CRITIC/JUDGE)
     ├── council/                    ← Council worker prompts
-    ├── hierarchy/                  ← Hierarchy worker prompts
     ├── orchestrator/               ← Orchestrator prompts
     ├── verifier/                   ← Verifier prompts
     └── MANIFEST.sha256.json        ← Prompt integrity registry

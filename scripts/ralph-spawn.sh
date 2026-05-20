@@ -8,12 +8,10 @@ if [[ "$LOCAL_MODE" == "1" ]]; then
   SOUL_DIR="${RALPH_SOUL_DIR:-$REPO_ROOT/sub-agents/claude-roles}"
   PROMPT_DIR="${RALPH_PROMPT_DIR:-$REPO_ROOT/sub-agents/claude-roles}"
   COUNCIL_DIR="${RALPH_COUNCIL_DIR:-$REPO_ROOT/sub-agents/council}"
-  HIERARCHY_DIR="${RALPH_HIERARCHY_DIR:-$REPO_ROOT/sub-agents/hierarchy}"
 else
   SOUL_DIR="${RALPH_SOUL_DIR:-${HOME}/.sub-agents/claude-roles}"
   PROMPT_DIR="${RALPH_PROMPT_DIR:-${HOME}/.sub-agents/claude-roles}"
   COUNCIL_DIR="${RALPH_COUNCIL_DIR:-${HOME}/.sub-agents/council}"
-  HIERARCHY_DIR="${RALPH_HIERARCHY_DIR:-${HOME}/.sub-agents/hierarchy}"
 fi
 CLAUDE_CMD="${RALPH_SPAWN_CLAUDE_CMD:-claude}"
 
@@ -71,11 +69,9 @@ validate_runtime() {
   echo "soul_dir=$SOUL_DIR"
   echo "prompt_dir=$PROMPT_DIR"
   echo "council_dir=$COUNCIL_DIR"
-  echo "hierarchy_dir=$HIERARCHY_DIR"
   if [[ ! -d "$SOUL_DIR" ]]; then echo "MISSING: SOUL_DIR $SOUL_DIR"; missing=1; fi
   if [[ ! -d "$PROMPT_DIR" ]]; then echo "MISSING: PROMPT_DIR $PROMPT_DIR"; missing=1; fi
   if [[ ! -d "$COUNCIL_DIR" ]]; then echo "MISSING: COUNCIL_DIR $COUNCIL_DIR"; missing=1; fi
-  if [[ ! -d "$HIERARCHY_DIR" ]]; then echo "MISSING: HIERARCHY_DIR $HIERARCHY_DIR"; missing=1; fi
   if ! command -v python3 >/dev/null 2>&1; then echo "MISSING: python3"; missing=1; fi
   if ! command -v "$CLAUDE_CMD" >/dev/null 2>&1; then echo "MISSING: claude command ($CLAUDE_CMD)"; missing=1; fi
   for role in orchestrator coder tester verifier; do
@@ -95,11 +91,7 @@ validate_runtime() {
     [[ -f "$COUNCIL_DIR/researcher.md" ]]         || { echo "MISSING: council/researcher.md"; missing=1; }
     [[ -f "$COUNCIL_DIR/solutions_architect.md" ]] || { echo "MISSING: council/solutions_architect.md"; missing=1; }
   fi
-  # Validate hierarchy files
-  if [[ -d "$HIERARCHY_DIR" ]]; then
-    [[ -f "$HIERARCHY_DIR/role_matrix.yaml" ]] || { echo "MISSING: hierarchy/role_matrix.yaml"; missing=1; }
-    [[ -f "$HIERARCHY_DIR/effort_cascade.yaml" ]] || { echo "MISSING: hierarchy/effort_cascade.yaml"; missing=1; }
-  fi
+  # Validate hierarchy files — removed in Fix 2; hierarchy/ was an unused architectural layer
   if [[ $missing -eq 0 ]]; then
     echo "OK: all required runtime prerequisites present"
   else

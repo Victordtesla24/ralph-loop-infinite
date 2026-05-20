@@ -70,7 +70,7 @@ Council outputs are synthesised by the Orchestrator before final delivery.
 
 The orchestrator runs at `xhigh`. Spawned agents inherit one tier below
 unless explicitly raised. Depth is capped at 3 (Orchestrator → Council →
-Specialist). See `hermes/hierarchy/effort_cascade.yaml`.
+Specialist).
 
 ## Ralph-Loop Enforcement
 
