@@ -235,7 +235,14 @@ EVIDENCE_HELPER="$SBX_ROOT/.claude/hooks/ralph-loop-infinite-evidence.py"
 T4_TMP=$(mktemp -d)
 ART_MATCH="$T4_TMP/match.log"
 ART_MISMATCH="$T4_TMP/mismatch.log"
-echo "summary: 42 passed, 0 failed; coverage 17/17" > "$ART_MATCH"
+cat > "$ART_MATCH" <<'TESTLOG'
+test_auth.py::test_login PASSED
+test_auth.py::test_logout PASSED
+test_payment.py::test_charge PASSED
+
+============================= 42 passed, 0 failed in 2.34s ==========
+coverage 17/17
+TESTLOG
 echo "this artifact mentions nothing about tests at all" > "$ART_MISMATCH"
 AGENT_MATCH="$T4_TMP/agent-match.txt"
 AGENT_MISMATCH="$T4_TMP/agent-mismatch.txt"

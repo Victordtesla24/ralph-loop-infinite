@@ -128,6 +128,8 @@ GENERATE → CRITIQUE → JUDGE → REMEDIATE → (repeat until JUDGE PASS)
 
 **Judge:** Scores all five dimensions (completeness, correctness, clarity, depth, actionability) — each 0.0-1.0. Any dimension < 0.80 → automatic revise. No partial credit, no averaging.
 
+> **Implementation note:** The JUDGE role is fulfilled by the `ralph-loop-infinite-verifier.sh` shell script, which invokes the `judge` subcommand of `ralph-loop-infinite-ralph.py`. This is a Python-based judge that calls a model API (Anthropic/DeepSeek/MiniMax/GLM) with a structured system prompt, parses the response into typed `Critique` + `Judgement` objects, and enforces per-dimension threshold and anti-leniency rules programmatically. It is **not** a separately spawned sub-agent with its own conversation context — the `verifier.SOUL.md` prompt file documents the role contract but the actual judging is performed inline by the Python engine operating on the full evidence bundle.
+
 **Remediate:** Targeted fix — preserve correct parts, address only identified issues. NOT a naive full rewrite. The blog says: *"treat this like an editor with a red pen, NOT a writer."*
 
 ### Exit Conditions
@@ -157,6 +159,8 @@ Orchestrator (GENERATOR) ──▶ Worker/Coder (GENERATOR) ──▶ Evidence
 
 Workers do NOT self-assess. Orchestrator routes to JUDGE. Only JUDGE can stop the loop.
 On verifier FAIL or evidence PRECHECK_FAIL, `ralph-loop-infinite-stop.sh` deterministically invokes `ralph-loop-infinite-generator.py`, which dispatches explicit `orchestrator,coder,tester` stages through `scripts/ralph-spawn.sh` (configurable via `RALPH_GENERATOR_ROLES`). Success requires every required stage to exit 0 and write an evidence artifact. The Stop hook monitors and records state; the generator subprocess is the autonomous executor backend.
+
+> **Verifier architecture note:** The JUDGE is **not** spawned as a separate sub-agent process. Instead, `ralph-loop-infinite-verifier.sh` calls `ralph-loop-infinite-ralph.py judge`, which runs the `critique_and_judge()` Python function — making two API calls (CRITIC, then JUDGE) with separate system prompts, parsing structured JSON responses, and enforcing the scoring contract in code. The HMAC signing happens in the shell after the Python judge returns. The `sub-agents/verifier/` directory and `verifier.SOUL.md` contain the JUDGE role contract used by the prompts, not an independently running agent.
 
 ---
 
@@ -200,7 +204,7 @@ All sub-agents are classified under one of three roles from the blog:
 │   ├── senior-sme.SOUL.md     GENERATOR
 │   ├── analyst.SOUL.md        dual-mode prompt: use analyst-generator or analyst-critic
 │   ├── tester.SOUL.md         CRITIC
-│   └── verifier.SOUL.md       JUDGE     (scores + HMAC-signed PASS)
+│   └── verifier.SOUL.md       JUDGE     (role contract for the Python judge, NOT a separately spawned agent)
 ├── council/                ← Worker prompts (GENERATOR + CRITIC)
 ├── hierarchy/              ← Role effort/matrix definitions
 ├── orchestrator/           ← Orchestrator prompts (GENERATOR)

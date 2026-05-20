@@ -188,6 +188,74 @@ def _bytes_contain_numeric_token(blob: bytes, number: str, suffix: str) -> bool:
     return re.search(pattern, text, re.IGNORECASE) is not None
 
 
+TEST_EXECUTION_SIGNAL_RX = re.compile(
+    r"\b(passed|failed|PASS|FAIL|OK|ERROR|test_|\.py:\d+|\.js:\d+|\.ts:\d+|"
+    r"in \d+\.\d+s|assert|AssertionError|\d+%|pytest|unittest|jest|mocha)\b",
+    re.IGNORECASE,
+)
+
+
+def _blob_has_test_execution_markers(blob: bytes) -> bool:
+    """Heuristic: does blob contain evidence of *actual test execution*?
+
+    A fabricated one-line artifact containing only ``42 passed, 0 failed``
+    would match the numeric token check but has no credible markers of a test
+    runner having produced real output.  This function demands at least two
+    independent signals (framework markers, file:line references, timing,
+    assertion text, multiple pass/fail hits) spread across more than one line
+    before accepting the artifact as genuine test-execution evidence.
+    """
+    if not blob:
+        return False
+    try:
+        text = blob.decode("utf-8", errors="replace")
+    except Exception:
+        return False
+
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if len(lines) <= 1:
+        return False
+
+    signals: set[str] = set()
+
+    # Multiple pass / fail occurrences (beyond the single summary line)
+    if len(re.findall(r"\bpassed\b", text, re.IGNORECASE)) >= 2:
+        signals.add("multi-passed")
+    if len(re.findall(r"\bfailed\b", text, re.IGNORECASE)) >= 2:
+        signals.add("multi-failed")
+
+    # Framework result markers
+    if re.search(r"\b(PASS|FAIL|OK|ERROR)\b", text):
+        signals.add("result-markers")
+
+    # Test-function or test-suite naming
+    if re.search(r"\b(test_|Test |def test|it\(|describe\()", text):
+        signals.add("test-names")
+
+    # Framework signatures
+    if re.search(r"\b(pytest|unittest|jest|mocha|rspec|junit)\b",
+                 text, re.IGNORECASE):
+        signals.add("framework")
+
+    # File:line references  e.g. ``test_auth.py:42``
+    if re.search(r"\.(py|js|ts|rb|go|java|rs):\d+", text):
+        signals.add("file-line")
+
+    # Assertion / exception traces
+    if re.search(r"\b(assert|AssertionError|FAILED|PASSED)\b", text):
+        signals.add("assertions")
+
+    # Timing / duration  e.g. ``in 2.34s``
+    if re.search(r"\bin \d+\.\d+s\b", text):
+        signals.add("timing")
+
+    # Coverage / percentage lines
+    if re.search(r"\b(\d{1,3}%)\b", text):
+        signals.add("coverage")
+
+    return len(signals) >= 2
+
+
 def _bytes_contain_ratio(blob: bytes, num: str, denom: str) -> bool:
     if not blob:
         return False
@@ -316,21 +384,32 @@ def precheck(bundle: dict[str, Any], agent_output: str) -> dict[str, Any]:
         failed_n = _normalize_number(failed_raw)
         if passed_n.isdigit() and int(passed_n) > 0:
             ok_pass = _any_artifact_or_transcript_supports(
-                bundle, lambda blob, n=passed_n: _bytes_contain_numeric_token(blob, n, "passed")
+                bundle,
+                lambda blob, n=passed_n: (
+                    _bytes_contain_numeric_token(blob, n, "passed")
+                    and _blob_has_test_execution_markers(blob)
+                ),
             )
             if not ok_pass:
                 reasons.append(
                     f"claim 'Tests: {passed_raw} passed' has no matching '{passed_n} passed' "
-                    f"token in any cited artifact or the transcript"
+                    f"token in any cited artifact or the transcript, or the matching "
+                    f"artifact lacks credible test-execution markers (multi-line output, "
+                    f"framework signatures, file:line references, timing, or assertion traces)"
                 )
         if failed_n.isdigit():
             ok_fail = _any_artifact_or_transcript_supports(
-                bundle, lambda blob, n=failed_n: _bytes_contain_numeric_token(blob, n, "failed")
+                bundle,
+                lambda blob, n=failed_n: (
+                    _bytes_contain_numeric_token(blob, n, "failed")
+                    and _blob_has_test_execution_markers(blob)
+                ),
             )
             if not ok_fail:
                 reasons.append(
                     f"claim 'Tests: {failed_raw} failed' has no matching '{failed_n} failed' "
-                    f"token in any cited artifact or the transcript"
+                    f"token in any cited artifact or the transcript, or the matching "
+                    f"artifact lacks credible test-execution markers"
                 )
 
     server_exc_match = SERVER_EXC_RX.search(agent_output)
@@ -396,9 +475,20 @@ def _self_test() -> int:
     tmp = Path(os.environ.get("TMPDIR", "/tmp")) / f"rli-evidence-{os.getpid()}"
     tmp.mkdir(parents=True, exist_ok=True)
     art_match = tmp / "report-match.log"
-    art_match.write_bytes(b"summary: 42 passed, 0 failed\nrequirements 17/17\n")
+    art_match.write_bytes(
+        b"test_auth.py::test_login PASSED\n"
+        b"test_auth.py::test_logout PASSED\n"
+        b"test_auth.py::test_session_expiry PASSED\n"
+        b"test_payment.py::test_charge PASSED\n"
+        b"test_payment.py::test_refund PASSED\n"
+        b"\n"
+        b"============================= 42 passed, 0 failed in 2.34s ==========\n"
+        b"requirements: 17/17\n"
+    )
     art_mismatch = tmp / "report-mismatch.log"
     art_mismatch.write_bytes(b"this artifact mentions nothing about tests")
+    art_fabricated = tmp / "report-fabricated.log"
+    art_fabricated.write_bytes(b"summary: 42 passed, 0 failed\n")
 
     agent_output_match = (
         "Tests: 42 passed, 0 failed\n"
@@ -411,6 +501,12 @@ def _self_test() -> int:
         "Server exceptions: 0\n"
         "Requirements satisfied: 17/17 (100%)\n"
         f"see {art_mismatch}\n"
+    )
+    agent_output_fabricated = (
+        "Tests: 42 passed, 0 failed\n"
+        "Server exceptions: 0\n"
+        "Requirements satisfied: 17/17 (100%)\n"
+        f"see {art_fabricated}\n"
     )
 
     bundle_match = build_bundle(
@@ -439,6 +535,30 @@ def _self_test() -> int:
     if not any("42 passed" in r for r in pre_mismatch.get("reasons", [])):
         failures.append("FAIL reason should name the unmatched '42 passed' claim")
 
+    # Fabricated artifact: has the numeric claim but no test-execution evidence
+    bundle_fabricated = build_bundle(
+        agent_output=agent_output_fabricated,
+        original_prompt="test",
+        transcript_path="",
+        session_id="self-test",
+        iteration=1,
+        state_file="",
+    )
+    pre_fab = precheck(bundle_fabricated, agent_output_fabricated)
+    if pre_fab["verdict"] != "FAIL":
+        failures.append(
+            f"fabricated artifact (claim without execution markers) "
+            f"should FAIL precheck, got {pre_fab}"
+        )
+    if not any(
+        "test-execution markers" in r
+        for r in pre_fab.get("reasons", [])
+    ):
+        failures.append(
+            "fabricated-artifact FAIL reason should mention "
+            "'test-execution markers'"
+        )
+
     invalid_output = (
         "Tests: 1 passed, 0 failed\n"
         "Requirements satisfied: 4/5 (100%)\n"
@@ -456,7 +576,7 @@ def _self_test() -> int:
     if pre_inv["verdict"] != "FAIL":
         failures.append("structural 4/5 (100%) claim should FAIL")
 
-    for p in (art_match, art_mismatch):
+    for p in (art_match, art_mismatch, art_fabricated):
         try:
             p.unlink()
         except OSError:
@@ -469,7 +589,7 @@ def _self_test() -> int:
     if failures:
         print(json.dumps({"status": "FAIL", "failures": failures}, indent=2))
         return 1
-    print(json.dumps({"status": "PASS", "tests_run": 3}))
+    print(json.dumps({"status": "PASS", "tests_run": 5}))
     return 0
 
 
