@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RALPH Loop Infinite Visual Test Flow</title>
+  <style>
+    :root {
+      --bg0: #05070f;
+      --bg1: #0a1020;
+      --card: rgba(9, 14, 28, 0.76);
+      --line: rgba(120, 170, 255, 0.35);
+      --txt: #d9e7ff;
+      --muted: #8ea4cb;
+      --ok: #47e89e;
+      --warn: #ffd35a;
+      --fail: #ff6b7c;
+      --violet: #8f7dff;
+      --cyan: #49e2ff;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle at 20% 10%, #111d40 0%, var(--bg0) 45%, #02040a 100%);
+      color: var(--txt);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      overflow: hidden;
+    }
+    #app {
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+    #scene {
+      position: absolute;
+      inset: 0;
+    }
+    .hud {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      display: grid;
+      grid-template-columns: 360px 1fr 360px;
+      grid-template-rows: auto 1fr auto;
+      gap: 14px;
+      padding: 18px;
+    }
+    .panel {
+      pointer-events: auto;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+    }
+    .title {
+      font-size: 13px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+    .main {
+      grid-column: 1 / 4;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding-top: 4px;
+      pointer-events: none;
+    }
+    .badge {
+      pointer-events: auto;
+      background: rgba(10, 18, 36, 0.7);
+      border: 1px solid rgba(111, 159, 255, 0.35);
+      border-radius: 999px;
+      padding: 10px 16px;
+      font-weight: 600;
+      font-size: 14px;
+      letter-spacing: 0.02em;
+    }
+    .left, .right {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      height: fit-content;
+      max-height: 100%;
+      overflow: auto;
+    }
+    .left { grid-column: 1; grid-row: 2; }
+    .right { grid-column: 3; grid-row: 2; }
+    .bottom {
+      grid-column: 1 / 4;
+      grid-row: 3;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .metric {
+      padding: 14px;
+      min-height: 108px;
+    }
+    .big {
+      font-size: 28px;
+      font-weight: 700;
+      margin: 6px 0;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid transparent;
+    }
+    .ok { color: var(--ok); border-color: rgba(71, 232, 158, 0.4); background: rgba(71, 232, 158, 0.1); }
+    .warn { color: var(--warn); border-color: rgba(255, 211, 90, 0.4); background: rgba(255, 211, 90, 0.1); }
+    .fail { color: var(--fail); border-color: rgba(255, 107, 124, 0.4); background: rgba(255, 107, 124, 0.1); }
+    .violet { color: var(--violet); border-color: rgba(143, 125, 255, 0.4); background: rgba(143, 125, 255, 0.1); }
+    .bar {
+      width: 100%;
+      height: 10px;
+      border-radius: 8px;
+      background: rgba(120, 170, 255, 0.15);
+      overflow: hidden;
+      margin-top: 7px;
+      margin-bottom: 6px;
+    }
+    .bar > span {
+      display: block;
+      height: 100%;
+      width: 0;
+      border-radius: 8px;
+      transition: width 300ms ease;
+      background: linear-gradient(90deg, #49e2ff 0%, #8f7dff 100%);
+    }
+    .controls {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    button {
+      border: 1px solid rgba(135, 179, 255, 0.4);
+      background: rgba(11, 18, 35, 0.8);
+      color: var(--txt);
+      border-radius: 10px;
+      padding: 8px 10px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 12px;
+    }
+    button.active {
+      border-color: rgba(73, 226, 255, 0.85);
+      box-shadow: 0 0 0 1px rgba(73, 226, 255, 0.35) inset;
+      color: #c4f4ff;
+    }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      color: #b9c9e6;
+      white-space: pre-wrap;
+      line-height: 1.5;
+      background: rgba(8, 14, 26, 0.65);
+      border: 1px solid rgba(120,170,255,0.25);
+      border-radius: 10px;
+      padding: 10px;
+    }
+    @media (max-width: 1100px) {
+      .hud {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto auto auto auto;
+        overflow: auto;
+      }
+      .left, .right, .bottom, .main {
+        grid-column: 1;
+      }
+      .left { grid-row: 2; }
+      .right { grid-row: 3; }
+      .bottom { grid-row: 4; grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <canvas id="scene"></canvas>
+    <div class="hud">
+      <div class="main">
+        <div class="badge" id="headline">RALPH LOOP · STRICT MODE · VERIFIER PASS REQUIRED</div>
+      </div>
+      <div class="panel left">
+        <div class="title">Interactive Flow</div>
+        <div class="row"><span>Stage</span><span class="chip violet" id="stageChip">GENERATE</span></div>
+        <div class="row"><span>Iteration</span><span id="iteration">1</span></div>
+        <div class="row"><span>Correlation ID</span><span id="corr" class="mono"></span></div>
+        <div class="row"><span>Verifier</span><span id="verdict" class="chip warn">PENDING</span></div>
+        <div class="title">Convergence Mode</div>
+        <div class="controls">
+          <button id="strictBtn" class="active">strict</button>
+          <button id="blogBtn">blog-compatible</button>
+        </div>
+        <div class="title">Session Playback</div>
+        <div class="controls">
+          <button id="playBtn">play</button>
+          <button id="pauseBtn">pause</button>
+          <button id="resetBtn">reset</button>
+        </div>
+      </div>
+      <div class="panel right">
+        <div class="title">Test-based Visualization</div>
+        <div class="row"><span>Harness</span><span id="harness" class="chip ok">PASS 29 / FAIL 0</span></div>
+        <div>Generator artifact quality</div>
+        <div class="bar"><span id="genBar"></span></div>
+        <div>Critique depth</div>
+        <div class="bar"><span id="criBar"></span></div>
+        <div>Evidence corroboration</div>
+        <div class="bar"><span id="evBar"></span></div>
+        <div>Verifier confidence</div>
+        <div class="bar"><span id="verBar"></span></div>
+        <div class="title">AI Development Value</div>
+        <div class="mono" id="valueBox"></div>
+      </div>
+      <div class="bottom">
+        <div class="panel metric">
+          <div class="title">Quality score</div>
+          <div class="big" id="quality">0.80</div>
+          <span class="chip ok" id="qState">passes threshold</span>
+        </div>
+        <div class="panel metric">
+          <div class="title">Time to trustworthy output</div>
+          <div class="big" id="ttv">2.6m</div>
+          <span class="chip violet">contract-safe loop</span>
+        </div>
+        <div class="panel metric">
+          <div class="title">Exit gate</div>
+          <div class="big" id="gate">HMAC PASS</div>
+          <span class="chip warn" id="gateState">waiting verifier</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.165.0/build/three.module.js';
+
+    const canvas = document.getElementById('scene');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 200);
+    camera.position.set(0, 2, 11);
+
+    const ambient = new THREE.AmbientLight(0xbccfff, 0.7);
+    const p1 = new THREE.PointLight(0x49e2ff, 2.2, 60);
+    const p2 = new THREE.PointLight(0x8f7dff, 1.8, 60);
+    const p3 = new THREE.PointLight(0xff6b7c, 1.2, 60);
+    p1.position.set(6, 7, 6);
+    p2.position.set(-7, 2, 3);
+    p3.position.set(0, -4, 7);
+    scene.add(ambient, p1, p2, p3);
+
+    const core = new THREE.Mesh(
+      new THREE.TorusKnotGeometry(1.7, 0.52, 250, 24),
+      new THREE.MeshStandardMaterial({ color: 0x5c8bff, metalness: 0.55, roughness: 0.25, emissive: 0x121a40, emissiveIntensity: 0.65 })
+    );
+    scene.add(core);
+
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(4.2, 0.08, 24, 240),
+      new THREE.MeshBasicMaterial({ color: 0x7ba9ff, transparent: true, opacity: 0.55 })
+    );
+    ring.rotation.x = 1.1;
+    scene.add(ring);
+
+    const stages = ['GENERATE', 'CRITIQUE', 'JUDGE', 'REMEDIATE'];
+    const stageColors = [0x49e2ff, 0x8f7dff, 0xffb25a, 0x47e89e];
+    const nodes = [];
+    const nodeGroup = new THREE.Group();
+
+    for (let i = 0; i < stages.length; i++) {
+      const a = (Math.PI * 2 * i) / stages.length;
+      const x = Math.cos(a) * 4.2;
+      const z = Math.sin(a) * 4.2;
+      const mat = new THREE.MeshStandardMaterial({ color: stageColors[i], emissive: stageColors[i], emissiveIntensity: 0.5, roughness: 0.35, metalness: 0.2 });
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.34, 24, 24), mat);
+      mesh.position.set(x, 0, z);
+      nodes.push(mesh);
+      nodeGroup.add(mesh);
+    }
+    scene.add(nodeGroup);
+
+    const starsGeo = new THREE.BufferGeometry();
+    const starsCount = 1200;
+    const pos = new Float32Array(starsCount * 3);
+    for (let i = 0; i < starsCount; i++) {
+      pos[i * 3] = (Math.random() - 0.5) * 45;
+      pos[i * 3 + 1] = (Math.random() - 0.5) * 28;
+      pos[i * 3 + 2] = (Math.random() - 0.5) * 45;
+    }
+    starsGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const stars = new THREE.Points(starsGeo, new THREE.PointsMaterial({ color: 0x8aa8ff, size: 0.05, transparent: true, opacity: 0.65 }));
+    scene.add(stars);
+
+    const stageChip = document.getElementById('stageChip');
+    const iterationEl = document.getElementById('iteration');
+    const corrEl = document.getElementById('corr');
+    const verdictEl = document.getElementById('verdict');
+    const headlineEl = document.getElementById('headline');
+    const harnessEl = document.getElementById('harness');
+    const qualityEl = document.getElementById('quality');
+    const qStateEl = document.getElementById('qState');
+    const ttvEl = document.getElementById('ttv');
+    const gateEl = document.getElementById('gate');
+    const gateStateEl = document.getElementById('gateState');
+    const valueBox = document.getElementById('valueBox');
+
+    const bars = {
+      gen: document.getElementById('genBar'),
+      cri: document.getElementById('criBar'),
+      ev: document.getElementById('evBar'),
+      ver: document.getElementById('verBar')
+    };
+
+    const strictBtn = document.getElementById('strictBtn');
+    const blogBtn = document.getElementById('blogBtn');
+    const playBtn = document.getElementById('playBtn');
+    const pauseBtn = document.getElementById('pauseBtn');
+    const resetBtn = document.getElementById('resetBtn');
+
+    const state = {
+      mode: 'strict',
+      playing: true,
+      stage: 0,
+      iteration: 1,
+      progress: 0,
+      timer: 0,
+      hSeed: 13
+    };
+
+    function corr() {
+      state.hSeed += 17;
+      return (Math.abs(Math.sin(state.hSeed) * 1e16) | 0).toString(16).padStart(8, '0') + (Math.abs(Math.cos(state.hSeed) * 1e16) | 0).toString(16).padStart(8, '0');
+    }
+
+    function valText() {
+      if (state.mode === 'strict') {
+        return 'Strict mode drives deterministic remediation until verifier PASS.
+- Less rework after merge
+- Fewer production regressions
+- Clear, auditable delivery chain';
+      }
+      return 'Blog-compatible mode can return convergence output earlier.
+- Faster preview loops
+- Useful for exploration drafts
+- Switch back to strict before release';
+    }
+
+    function updateUi() {
+      stageChip.textContent = stages[state.stage];
+      stageChip.className = 'chip violet';
+      iterationEl.textContent = String(state.iteration);
+      corrEl.textContent = corr();
+      const quality = (0.72 + state.progress * 0.25 + (state.mode === 'strict' ? 0.02 : -0.01)).toFixed(2);
+      qualityEl.textContent = quality;
+      const pass = Number(quality) >= 0.8;
+      qStateEl.textContent = pass ? 'passes threshold' : 'needs remediation';
+      qStateEl.className = pass ? 'chip ok' : 'chip fail';
+      bars.gen.style.width = `${Math.min(100, 56 + state.progress * 42)}%`;
+      bars.cri.style.width = `${Math.min(100, 52 + state.progress * 46)}%`;
+      bars.ev.style.width = `${Math.min(100, 48 + state.progress * 50)}%`;
+      bars.ver.style.width = `${Math.min(100, 28 + state.progress * 66)}%`;
+      const passSignal = state.mode === 'strict' ? state.stage === 2 && state.progress > 0.9 : state.progress > 0.96;
+      if (passSignal) {
+        verdictEl.textContent = 'PASS';
+        verdictEl.className = 'chip ok';
+        gateStateEl.textContent = 'verifier signed';
+        gateStateEl.className = 'chip ok';
+        gateEl.textContent = 'HMAC PASS';
+      } else {
+        verdictEl.textContent = state.stage === 2 ? 'REVIEW' : 'PENDING';
+        verdictEl.className = state.stage === 2 ? 'chip warn' : 'chip violet';
+        gateStateEl.textContent = state.mode === 'strict' ? 'waiting verifier' : 'convergence return enabled';
+        gateStateEl.className = state.mode === 'strict' ? 'chip warn' : 'chip violet';
+        gateEl.textContent = state.mode === 'strict' ? 'HMAC PASS' : 'CONVERGENCE';
+      }
+      harnessEl.textContent = state.mode === 'strict' ? 'PASS 29 / FAIL 0' : 'PASS 29 / FAIL 0 + convergence return';
+      ttvEl.textContent = state.mode === 'strict' ? `${(2.2 + (1 - state.progress) * 1.3).toFixed(1)}m` : `${(1.7 + (1 - state.progress) * 1.2).toFixed(1)}m`;
+      headlineEl.textContent = `RALPH LOOP · ${state.mode.toUpperCase()} MODE · ${state.mode === 'strict' ? 'VERIFIER PASS REQUIRED' : 'CONVERGENCE RETURN ALLOWED'}`;
+      valueBox.textContent = valText();
+    }
+
+    strictBtn.onclick = () => {
+      state.mode = 'strict';
+      strictBtn.classList.add('active');
+      blogBtn.classList.remove('active');
+      updateUi();
+    };
+    blogBtn.onclick = () => {
+      state.mode = 'blog-compatible';
+      blogBtn.classList.add('active');
+      strictBtn.classList.remove('active');
+      updateUi();
+    };
+    playBtn.onclick = () => state.playing = true;
+    pauseBtn.onclick = () => state.playing = false;
+    resetBtn.onclick = () => {
+      state.stage = 0;
+      state.iteration = 1;
+      state.progress = 0;
+      state.timer = 0;
+      state.playing = true;
+      updateUi();
+    };
+
+    function onResize() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    }
+    window.addEventListener('resize', onResize);
+    onResize();
+
+    let last = performance.now();
+    updateUi();
+
+    function tick(now) {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      const t = now * 0.001;
+
+      core.rotation.x += dt * 0.35;
+      core.rotation.y += dt * 0.52;
+      core.rotation.z += dt * 0.18;
+      ring.rotation.z -= dt * 0.16;
+      stars.rotation.y += dt * 0.01;
+      nodeGroup.rotation.y += dt * 0.22;
+
+      if (state.playing) {
+        state.timer += dt;
+        state.progress = Math.min(1, state.progress + dt * 0.09);
+        if (state.timer > 2.3) {
+          state.timer = 0;
+          state.stage = (state.stage + 1) % stages.length;
+          if (state.stage === 0) {
+            state.iteration += 1;
+            if (state.iteration > 6 && state.mode === 'blog-compatible') {
+              state.iteration = 1;
+              state.progress = 0;
+            }
+          }
+          updateUi();
+        }
+      }
+
+      const pulse = 0.45 + Math.sin(t * 3.5) * 0.35;
+      for (let i = 0; i < nodes.length; i++) {
+        const m = nodes[i].material;
+        const active = i === state.stage ? 1.8 : 0.65;
+        m.emissiveIntensity = active * (0.65 + pulse * 0.25);
+        nodes[i].scale.setScalar(i === state.stage ? 1.2 + pulse * 0.15 : 1);
+      }
+
+      renderer.render(scene, camera);
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  </script>
+</body>
+</html>
