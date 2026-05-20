@@ -121,6 +121,17 @@ HMAC signing key is managed at:
 
 Only explicit invocation arms the gate.
 
+### Prompt reconstruction skill
+
+```text
+/prompt-reconstruct <raw user prompt>
+```
+
+Installs to:
+
+- `~/.claude/skills/prompt-reconstruct/SKILL.md`
+- `~/.claude/commands/prompt-reconstruct.md`
+
 ### Monitor
 
 ```bash

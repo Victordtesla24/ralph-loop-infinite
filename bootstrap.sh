@@ -15,7 +15,7 @@ echo "  Ralph-Loop-Infinite — Production Bootstrap"
 echo "══════════════════════════════════════════════════════"
 
 # ── Step 1: Config files ──────────────────────────────────────
-echo "[1/10] Installing config files (CLAUDE.md, AGENTS.md, .claude.json) ..."
+echo "[1/11] Installing config files (CLAUDE.md, AGENTS.md, .claude.json) ..."
 
 if [[ -f "$REPO_ROOT/CLAUDE.md" ]]; then
   cp "$REPO_ROOT/CLAUDE.md" "${HOME}/.claude/CLAUDE.md"
@@ -40,7 +40,7 @@ if [[ -f "$REPO_ROOT/.claude.json" ]]; then
 fi
 
 # ── Step 2: Hook files ────────────────────────────────────────
-echo "[2/10] Installing Ralph hooks to ~/.claude/hooks/ ..."
+echo "[2/11] Installing Ralph hooks to ~/.claude/hooks/ ..."
 mkdir -p ~/.claude/hooks
 if [[ -d "$HOOKS_DIR" ]]; then
   cp -r "$HOOKS_DIR/"* ~/.claude/hooks/
@@ -55,18 +55,18 @@ fi
 # ── Step 3: HMAC signing key ─────────────────────────────────
 mkdir -p "$SECRETS_DIR"
 if [[ ! -f "$SECRETS_DIR/ralph-hmac.key" ]]; then
-  echo "[3/10] Generating HMAC signing key ..."
+  echo "[3/11] Generating HMAC signing key ..."
   openssl rand -hex 64 > "$SECRETS_DIR/ralph-hmac.key"
   chmod 600 "$SECRETS_DIR/ralph-hmac.key"
   echo "  → HMAC key generated at ~/.claude/secrets/ralph-hmac.key"
 else
-  echo "[3/10] HMAC key already present — skipping"
+  echo "[3/11] HMAC key already present — skipping"
 fi
 
 # ── Step 4: Contract hash manifest ──────────────────────────
 mkdir -p "$MANIFEST_DIR"
 if [[ -x ~/.claude/hooks/generate-contract-hashes.sh ]]; then
-  echo "[4/10] Registering contract hashes ..."
+  echo "[4/11] Registering contract hashes ..."
   bash ~/.claude/hooks/generate-contract-hashes.sh
   bash ~/.claude/hooks/generate-contract-hashes.sh --verify
   echo "  → manifest generated and verified"
@@ -74,23 +74,23 @@ fi
 
 # ── Step 5: State directory ──────────────────────────────────
 mkdir -p "$STATE_DIR"
-echo "[5/10] State directory ready at $STATE_DIR"
+echo "[5/11] State directory ready at $STATE_DIR"
 
 # ── Step 6: SQLite database ──────────────────────────────────
 if [[ -x ~/.claude/hooks/ralph-loop-infinite-db.py ]]; then
-  echo "[6/10] Initializing SQLite database ..."
+  echo "[6/11] Initializing SQLite database ..."
   python3 ~/.claude/hooks/ralph-loop-infinite-db.py init >/dev/null 2>&1 && echo "  → DB initialized" || echo "  → DB init failed (non-fatal)"
 fi
 
 # ── Step 7: Settings.json hook registration ──────────────────
 if [[ -f "$REPO_ROOT/scripts/sync-ralph-config.sh" ]]; then
-  echo "[7/10] Registering hooks in settings.json ..."
+  echo "[7/11] Registering hooks in settings.json ..."
   chmod +x "$REPO_ROOT/scripts/sync-ralph-config.sh"
   bash "$REPO_ROOT/scripts/sync-ralph-config.sh" >/dev/null 2>&1 && echo "  → settings.json updated" || echo "  → settings.json update failed (non-fatal)"
 fi
 
 # ── Step 8: Sub-agents (GENERATOR / CRITIC / JUDGE) ─────────
-echo "[8/10] Installing sub-agents to ~/.sub-agents/ ..."
+echo "[8/11] Installing sub-agents to ~/.sub-agents/ ..."
 if [[ -d "$REPO_ROOT/sub-agents" ]]; then
   if [[ -d "${HOME}/.sub-agents" ]]; then
     echo "  → ~/.sub-agents already exists — preserving"
@@ -103,7 +103,7 @@ if [[ -d "$REPO_ROOT/sub-agents" ]]; then
 fi
 
 # ── Step 9: Commands ──────────────────────────────────────────
-echo "[9/10] Installing slash commands to ~/.claude/commands/ ..."
+echo "[9/11] Installing slash commands to ~/.claude/commands/ ..."
 if [[ -d "$REPO_ROOT/commands" ]]; then
   mkdir -p "${HOME}/.claude/commands"
   cp -r "$REPO_ROOT/commands/"* "${HOME}/.claude/commands/"
@@ -111,8 +111,23 @@ if [[ -d "$REPO_ROOT/commands" ]]; then
   echo "  → $(find "$REPO_ROOT/commands" -name '*.md' | wc -l | tr -d ' ') commands installed"
 fi
 
-# ── Step 10: Ralph scripts ────────────────────────────────────
-echo "[10/10] Installing Ralph scripts ..."
+# ── Step 10: Skills ───────────────────────────────────────────
+echo "[10/11] Installing skills to ~/.claude/skills/ ..."
+if [[ -f "$REPO_ROOT/SKILL.md" ]]; then
+  mkdir -p "${HOME}/.claude/skills/ralph-loop-infinite"
+  cp "$REPO_ROOT/SKILL.md" "${HOME}/.claude/skills/ralph-loop-infinite/SKILL.md"
+  chmod 444 "${HOME}/.claude/skills/ralph-loop-infinite/SKILL.md"
+  echo "  → skill installed at ~/.claude/skills/ralph-loop-infinite/SKILL.md"
+fi
+if [[ -d "$REPO_ROOT/skills" ]]; then
+  mkdir -p "${HOME}/.claude/skills"
+  cp -r "$REPO_ROOT/skills/"* "${HOME}/.claude/skills/"
+  find "${HOME}/.claude/skills" -name 'SKILL.md' -exec chmod 444 {} \;
+  echo "  → $(find "$REPO_ROOT/skills" -name 'SKILL.md' | wc -l | tr -d ' ') additional skills installed"
+fi
+
+# ── Step 11: Ralph scripts ────────────────────────────────────
+echo "[11/11] Installing Ralph scripts ..."
 if [[ -f "$REPO_ROOT/scripts/ralph-config.sh" ]]; then
   mkdir -p "${HOME}/.claude/scripts"
   cp "$REPO_ROOT/scripts/ralph-config.sh" "${HOME}/.claude/scripts/"

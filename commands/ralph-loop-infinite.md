@@ -10,6 +10,8 @@ model-invocation: enabled
 
 ## Overview
 
+This command is the user-facing invoker for the installed `ralph-loop-infinite` skill at `~/.claude/skills/ralph-loop-infinite/SKILL.md`.
+
 Verify that the production deployment delivers — programmatically, visually, and experientially — exactly what the user originally requested. No iteration cap. No exit until every validation item passes simultaneously.
 
 This step eliminates the gap that causes users to spend hours debugging system integration issues, UI/UX regressions, server and browser exceptions, and functional-but-broken experiences after deployment.
