@@ -192,6 +192,11 @@ Analyst split is context-enforced: analyst-generator may generate traceability; 
 $([[ -f "$REPO_ROOT/sub-agents/orchestrator/RALPH.md" && "$ROLE" == "orchestrator" ]] && cat "$REPO_ROOT/sub-agents/orchestrator/RALPH.md" 2>/dev/null || true)
 $([[ -f "$REPO_ROOT/sub-agents/tester/CRITIC.md" && "$ROLE" == "tester" ]] && cat "$REPO_ROOT/sub-agents/tester/CRITIC.md" 2>/dev/null || true)
 $([[ -f "$REPO_ROOT/sub-agents/verifier/JUDGE.md" && "$ROLE" == "verifier" ]] && cat "$REPO_ROOT/sub-agents/verifier/JUDGE.md" 2>/dev/null || true)
+$([[ -f "$REPO_ROOT/sub-agents/claude-roles/coder.RALPH.md" && "$ROLE" == "coder" ]] && cat "$REPO_ROOT/sub-agents/claude-roles/coder.RALPH.md" 2>/dev/null || true)
+$([[ -f "$REPO_ROOT/sub-agents/claude-roles/researcher.RALPH.md" && "$ROLE" == "researcher" ]] && cat "$REPO_ROOT/sub-agents/claude-roles/researcher.RALPH.md" 2>/dev/null || true)
+$([[ -f "$REPO_ROOT/sub-agents/claude-roles/solution-architect.RALPH.md" && "$ROLE" == "solution-architect" ]] && cat "$REPO_ROOT/sub-agents/claude-roles/solution-architect.RALPH.md" 2>/dev/null || true)
+$([[ -f "$REPO_ROOT/sub-agents/claude-roles/analyst.RALPH.md" && "$ROLE" == "analyst-generator" ]] && cat "$REPO_ROOT/sub-agents/claude-roles/analyst.RALPH.md" 2>/dev/null || true)
+$([[ -f "$REPO_ROOT/sub-agents/claude-roles/senior-sme.RALPH.md" && "$ROLE" == "senior-sme" ]] && cat "$REPO_ROOT/sub-agents/claude-roles/senior-sme.RALPH.md" 2>/dev/null || true)
 --- END RALPH STAGE PROMPT ---
 
 --- COUNCIL DELIBERATION ---
