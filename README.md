@@ -11,17 +11,17 @@ Ralph-Loop-Infinite is a production-grade autonomous AI system built on enforced
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                                                             │
-│   ┌────────────┐    ┌───────────┐    ┌──────────┐           │
-│   │  GENERATE  │───▶│  CRITIQUE  │───▶│   JUDGE   │──┐      │
-│   └────────────┘    └───────────┘    └──────────┘  │      │
-│       │                  │                │        │      │
-│       ▼                  ▼                ▼        │      │
-│   Produce output    Identify issues  Score + decide       │
-│   + state contract  concrete issues  all dims ≥ 0.80      │
-│                                        │        ▼          │
-│                                        │   HMAC-signed     │
-│                                        │   verifier PASS   │
-│                                        └── exits loop     │
+│   ┌────────────┐    ┌───────────┐     ┌──────────┐          │
+│   │  GENERATE  │───▶│  CRITIQUE  │───▶│   JUDGE  │───┐      │
+│   └────────────┘    └───────────┘     └──────────┘   │      │
+│       │                  │                │          │      │
+│       ▼                  ▼                ▼          │      │
+│   Produce output    Identify issues  Score + decide  │      │
+│   + state contract  concrete issues  all dims ≥ 0.80 │      │
+│                                        │      ▼      ▼      │
+│                                        │   HMAC-signed      │
+│                                        │   verifier PASS    │
+│                                        └── exits loop       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -192,23 +192,25 @@ If you need a true agent framework, treat this as the enforcement skin around th
 ## Provider Chain
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│                                                             │
-│   Ralph Helper (ralph-loop-infinite-ralph.py)              │
-│                                                             │
-│   [Anthropic / claude-opus-4-7]         ← Primary          │
+┌──────────────────────────────────────────────────────────────┐
+│                                                              │
+│   Ralph Helper (ralph-loop-infinite-ralph.py)                │
+│                                                              │
+│   [Anthropic / claude-opus-4-7]          ← Primary           │
 │                  ↓  FAIL                                     │
-│   [MiniMax / MiniMax-M2.7]               ← Opus / Deepseek  │
+│   [MiniMax / MiniMax-M2.7]               ← Opus / Deepseek   │
 │                  ↓  FAIL                                     │
-│   [MiniMax / MiniMax-M2.7]               ← All other agents │
+│   [MiniMax / MiniMax-M2.7]               ← All other agents  │
 │                  ↓  ALL FAIL                                 │
-│   [offline-rule-based / deterministic]    ← diagnostic FAIL only          │
-│                  checks, clearly labelled provider           │
-│                                                             │
-│   Every skip and failure is logged.                         │
-│   Fallback is NEVER silent.                                 │
-│                                                             │
-└────────────────────────────────────────────────────────────┘
+│   [offline-rule-based / deterministic]   ← diagnostic FAIL   │
+│                                            only checks       │
+│                                            clearly           │
+│                                            labelled provider │
+│                                                              │
+│   Every skip and failure is logged.                          │
+│   Fallback is NEVER silent.                                  │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 Fallback model: **MiniMax-M2.7** via MinMax OAuth (MiniMax.io) — see `.env.production` keys.
@@ -221,18 +223,18 @@ All sub-agents are classified under one of three roles from the blog:
 
 ```
 ~/.sub-agents/
-├── claude-roles/           ← 8 role definitions (blog-aligned)
-│   ├── orchestrator.SOUL.md   GENERATOR  (produces output, cannot stop loop)
-│   ├── coder.SOUL.md          GENERATOR
+├── claude-roles/                   ← 8 role definitions (blog-aligned)
+│   ├── orchestrator.SOUL.md        GENERATOR  (produces output, cannot stop loop)
+│   ├── coder.SOUL.md               GENERATOR
 │   ├── solution-architect.SOUL.md  GENERATOR
-│   ├── researcher.SOUL.md     GENERATOR
-│   ├── senior-sme.SOUL.md     GENERATOR
-│   ├── analyst.SOUL.md        dual-mode prompt: use analyst-generator or analyst-critic
-│   ├── tester.SOUL.md         CRITIC
-│   └── verifier.SOUL.md       JUDGE     (role contract for the Python judge, NOT a separately spawned agent)
-├── council/                ← Worker prompts (GENERATOR + CRITIC)
-├── orchestrator/           ← Orchestrator prompts (GENERATOR)
-└── verifier/               ← Verifier prompts (JUDGE)
+│   ├── researcher.SOUL.md          GENERATOR
+│   ├── senior-sme.SOUL.md          GENERATOR
+│   ├── analyst.SOUL.md             dual-mode prompt: use analyst-generator or analyst-critic
+│   ├── tester.SOUL.md              CRITIC
+│   └── verifier.SOUL.md            JUDGE     (role contract for the Python judge, NOT a separately spawned agent)
+├── council/                        ← Worker prompts (GENERATOR + CRITIC)
+├── orchestrator/                   ← Orchestrator prompts (GENERATOR)
+└── verifier/                       ← Verifier prompts (JUDGE)
 ```
 
 Installed by bootstrap to `~/.sub-agents/` — preserved on re-runs (not overwritten).
@@ -243,44 +245,44 @@ Installed by bootstrap to `~/.sub-agents/` — preserved on re-runs (not overwri
 
 ```
 ralph-loop-infinite/
-├── bootstrap.sh                  ← One-command install
+├── bootstrap.sh                                ← One-command install
 ├── README.md
-├── CLAUDE.md                      ← Canonical contract (hash-registered)
-├── AGENTS.md                      ← Agent persona (synced from CLAUDE.md)
+├── CLAUDE.md                                   ← Canonical contract (hash-registered)
+├── AGENTS.md                                   ← Agent persona (synced from CLAUDE.md)
 ├── hooks/
-│   ├── ralph-loop-infinite-prompt.sh      ← UserPromptSubmit hook
-│   ├── ralph-loop-infinite-stop.sh        ← Stop hook (verifier invocation)
-│   ├── ralph-loop-infinite-session-start.sh ← SessionStart hook (PASS expiry + prerequisite report)
-│   ├── ralph-loop-infinite-bootstrap.sh   ← Bootstrap / install
-│   ├── ralph-loop-infinite-pretool.sh     ← Pre-tool deny guard
-│   ├── ralph-loop-infinite-ralph.py      ← explicit loop engine + first-class Generated stage
-│   ├── ralph-loop-infinite-generator.py  ← optional typed generator executor backend
-│   ├── ralph-loop-infinite-policy.py      ← Provider/model policy
-│   ├── ralph-loop-infinite-evidence.py    ← Evidence precheck
-│   ├── ralph-loop-infinite-db.py          ← SQLite state DB
-│   ├── ralph-loop-infinite-tsparse.py     ← Timestamp parsing
-│   ├── ralph-loop-infinite-pathguard.py   ← Path deny guard
-│   ├── generate-contract-hashes.sh        ← Manifest registry
-│   └── test-ralph-refactor.sh             ← Regression harness
+│   ├── ralph-loop-infinite-prompt.sh           ← UserPromptSubmit hook
+│   ├── ralph-loop-infinite-stop.sh             ← Stop hook (verifier invocation)
+│   ├── ralph-loop-infinite-session-start.sh    ← SessionStart hook (PASS expiry + prerequisite report)
+│   ├── ralph-loop-infinite-bootstrap.sh        ← Bootstrap / install
+│   ├── ralph-loop-infinite-pretool.sh          ← Pre-tool deny guard
+│   ├── ralph-loop-infinite-ralph.py            ← explicit loop engine + first-class Generated stage
+│   ├── ralph-loop-infinite-generator.py        ← optional typed generator executor backend
+│   ├── ralph-loop-infinite-policy.py           ← Provider/model policy
+│   ├── ralph-loop-infinite-evidence.py         ← Evidence precheck
+│   ├── ralph-loop-infinite-db.py               ← SQLite state DB
+│   ├── ralph-loop-infinite-tsparse.py          ← Timestamp parsing
+│   ├── ralph-loop-infinite-pathguard.py        ← Path deny guard
+│   ├── generate-contract-hashes.sh             ← Manifest registry
+│   └── test-ralph-refactor.sh                  ← Regression harness
 ├── scripts/
-│   ├── sync-ralph-config.sh        ← Update CLAUDE.md + settings.json
-│   └── install-sub-agents-to-root.sh ← Install sub-agents to VPS
+│   ├── sync-ralph-config.sh                    ← Update CLAUDE.md + settings.json
+│   └── install-sub-agents-to-root.sh           ← Install sub-agents to VPS
 └── sub-agents/
-    ├── claude-roles/               ← 8 role definitions (GENERATOR/CRITIC/JUDGE) — canonical
-    ├── council/                    ← Legacy worker prompts (archived — see council/README.md)
-    │   └── README.md               ← Status, why it is not used in v4.x, files inventory
-    ├── hierarchy/                  ← Archived role-effort matrices (see hierarchy/README.md)
-    │   ├── effort_cascade.yaml     ← Effort allocation per role (archived)
-    │   ├── role_matrix.yaml        ← Role classification matrix (archived)
-    │   └── README.md               ← Status and pointers to current production paths
-    ├── orchestrator/               ← Orchestrator prompts (GENERATOR)
-    │   └── RALPH.md                ← GENERATOR stage contract
-    ├── verifier/                   ← JUDGE role contract (NOT a spawned agent — verifier.sh → ralph.py judge)
-    │   ├── JUDGE.md                ← JUDGE stage contract
-    │   └── README.md               ← Why JUDGE is a Python function, not an agent
-    ├── tester/                     ← Tester prompts
-    │   └── CRITIC.md               ← CRITIC stage contract
-    └── MANIFEST.sha256.json        ← Prompt integrity registry
+    ├── claude-roles/                           ← 8 role definitions (GENERATOR/CRITIC/JUDGE) — canonical
+    ├── council/                                ← Legacy worker prompts (archived — see council/README.md)
+    │   └── README.md                           ← Status, why it is not used in v4.x, files inventory
+    ├── hierarchy/                              ← Archived role-effort matrices (see hierarchy/README.md)
+    │   ├── effort_cascade.yaml                 ← Effort allocation per role (archived)
+    │   ├── role_matrix.yaml                    ← Role classification matrix (archived)
+    │   └── README.md                           ← Status and pointers to current production paths
+    ├── orchestrator/                           ← Orchestrator prompts (GENERATOR)
+    │   └── RALPH.md                            ← GENERATOR stage contract
+    ├── verifier/                               ← JUDGE role contract (NOT a spawned agent — verifier.sh → ralph.py judge)
+    │   ├── JUDGE.md                            ← JUDGE stage contract
+    │   └── README.md                           ← Why JUDGE is a Python function, not an agent
+    ├── tester/                                 ← Tester prompts
+    │   └── CRITIC.md                           ← CRITIC stage contract
+    └── MANIFEST.sha256.json                    ← Prompt integrity registry
 ```
 
 ---
@@ -342,16 +344,16 @@ RALPH_LIVE_TEST=1 python3 ~/.claude/hooks/ralph-loop-infinite-ralph.py self-test
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                                                              │
-│   A loop doesn't guarantee improvement.                     │
-│   A system doesn't guarantee reliability.                   │
+│   A loop doesn't guarantee improvement.                      │
+│   A system doesn't guarantee reliability.                    │
 │                                                              │
 │   You earn both by:                                          │
 │     enforcing structure                                      │
 │     defining quality                                         │
-│     handling failure like an adult system                   │
+│     handling failure like an adult system                    │
 │                                                              │
 │   That's the difference between:                             │
-│     a cool demo  ───────────  production-grade system         │
+│     a cool demo  ───────────  production-grade system        │
 │                                                              │
 └──────────────────────────────────────────────────────────────┘
 ```
