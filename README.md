@@ -11,14 +11,14 @@ Ralph-Loop-Infinite is a production-grade autonomous AI system built on enforced
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                                                             │
-│   ┌────────────┐    ┌───────────┐     ┌──────────┐          │
-│   │  GENERATE  │───▶│  CRITIQUE  │───▶│   JUDGE  │───┐      │
-│   └────────────┘    └───────────┘     └──────────┘   │      │
-│       │                  │                │          │      │
-│       ▼                  ▼                ▼          │      │
-│   Produce output    Identify issues  Score + decide  │      │
-│   + state contract  concrete issues  all dims ≥ 0.80 │      │
-│                                        │      ▼      ▼      │
+│   ┌────────────┐    ┌────────────┐     ┌──────────┐         │
+│   │  GENERATE  │───▶│  CRITIQUE  │────▶│   JUDGE  │───┐     │
+│   └────────────┘    └────────────┘     └──────────┘   │     │
+│         │                  │                │         │     │
+│         ▼                  ▼                ▼         │     │
+│   Produce output    Identify issues  Score + decide   │     │
+│   + state contract  concrete issues  all dims ≥ 0.80  │     │
+│                                        │      ▼       ▼     │
 │                                        │   HMAC-signed      │
 │                                        │   verifier PASS    │
 │                                        └── exits loop       │
