@@ -526,6 +526,26 @@ fi
 
 # --------------------------------------------------------------------------
 echo
+echo "[10] Live provider loop test — exercises actual provider API calls"
+# --------------------------------------------------------------------------
+# Create a minimal test prompt for the live loop.
+cat > /tmp/test-prompt.txt <<'EOPROMPT'
+Implement a Python function that returns the string "hello world".
+EOPROMPT
+if ! python3 "$RALPH_HELPER" creds-check 2>/dev/null | grep -q '"present": true'; then
+  pass "test [10] SKIP no API keys"
+else
+  OUT=$(python3 "$RALPH_HELPER" loop --original-prompt-file /tmp/test-prompt.txt --session-id test-live --max-iterations 2 2>&1)
+  if echo "$OUT" | grep -q '"iterations_run":'; then
+    pass "test [10] live loop executed"
+  else
+    fail "test [10] live loop failed: $OUT"
+  fi
+fi
+rm -f /tmp/test-prompt.txt
+
+# --------------------------------------------------------------------------
+echo
 echo "=== Hardening guard: live tree unchanged ==="
 # --------------------------------------------------------------------------
 NEW_LIVE_STOP=$(shasum -a 256 "$LIVE_DIR/ralph-loop-infinite-stop.sh" 2>/dev/null | awk '{print $1}')
